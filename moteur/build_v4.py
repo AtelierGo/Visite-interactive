@@ -112,6 +112,9 @@ def main(src, dst, cfg='reglages.json'):
         scene.add_geometry(mesh, geom_name=name)
 
     DEP = esc.get('deplacements', {})      # {element: {x_m, y_m, z_m}} : elements deplaces dans l'editeur (X est, Y nord, Z haut)
+    def largeur(el, w0):     # reglage largeur_m d'une porte : renvoie l'ecart avec la largeur du plan (0 si inchangee)
+        lw = (DEP.get(el) or {}).get('largeur_m')
+        return float(lw) - w0 if lw and abs(float(lw) - w0) > 0.002 else 0.0
     def deplacement(el):
         d_ = DEP.get(el) or {}
         return (float(d_.get('x_m', 0) or 0), float(d_.get('y_m', 0) or 0), float(d_.get('z_m', 0) or 0))
@@ -165,7 +168,7 @@ def main(src, dst, cfg='reglages.json'):
             p0_, p1_ = S.pt(*v['de_plan_pt'], dx, dy), S.pt(*v['a_plan_pt'], dx, dy); L_ = math.dist(p0_, p1_)
             for a_, b_ in v.get('baies_porte_u_m', []):
                 u_ = (a_ + b_) / 2; baies_c.append(Point(p0_[0] + (p1_[0] - p0_[0]) * u_ / L_, p0_[1] + (p1_[1] - p0_[1]) * u_ / L_))
-        door_info, axe_mur = {}, {}
+        door_info, axe_mur, geo = {}, {}, {}     # geo : direction du vantail, sa largeur, axe et largeur de l'ouverture
         for k, l in enumerate(lv):
             rc = list(l.minimum_rotated_rectangle.exterior.coords)[:4]
             sides = sorted([(math.dist(rc[j], rc[(j + 1) % 4]), j) for j in range(4)])[:2]     # les deux petits cotes
@@ -193,10 +196,15 @@ def main(src, dst, cfg='reglages.json'):
                 tg = tl - math.pi / 2                # ouverture inconnue : on suppose le vantail dessine ouvert a 90 deg
             a0 = (math.degrees(tl - tg) + 180) % 360 - 180
             door_info[k] = (h_, round(a0, 1))
+            gw = None
+            if gap is not None:
+                xs_ = [c_[0] for c_ in affinity.rotate(gap, -tg, origin=h_, use_radians=True).exterior.coords]; gw = max(xs_) - min(xs_)
+            geo[k] = dict(tl=tl, tg=tg, w0=max(math.dist(rc[j], rc[(j + 1) % 4]) for j in range(4)), gap=gap, gw=gw)
         W0 = W                               # murs du plan : emprise du batiment et pieces restent les memes quand une porte bouge
         for k, l in enumerate(lv):
             ddx, ddy, ddz = deplacement(f'{n}_porte_{k}')
-            if not (ddx or ddy or ddz): continue
+            dl = largeur(f'{n}_porte_{k}', geo[k]['w0'])          # elargissement du vantail (m), l'ouverture du mur suit
+            if not (ddx or ddy or ddz or dl): continue
             door_shift[k] = (ddx, ddy, ddz)
             if (DEP.get(f'{n}_porte_{k}') or {}).get('garder_ouverture'):     # reglage : le mur garde son ouverture du plan, seul le vantail bouge
                 garde.add(k); print(f'  porte {k} deplacee de ({ddx:.2f}, {ddy:.2f}, {ddz:.2f}) m dans son ouverture (mur inchange)'); continue
@@ -204,8 +212,22 @@ def main(src, dst, cfg='reglages.json'):
             gap = max(near_, key=lambda g_: g_.area / (0.05 + g_.distance(l)), default=None)
             if gap is None or gap.distance(l) > 0.6: print(f'  porte {k} : ouverture introuvable, seul le vantail bouge'); continue
             filled = W.union(gap)
-            ng = affinity.translate(gap, ddx, ddy).intersection(filled).buffer(-0.005).buffer(0.005)
+            g2 = gap
+            if dl:      # ouverture elargie ou retrecie le long du mur, cote charniere fixe
+                h_, tg = door_info[k][0], geo[k]['tg']; r_ = affinity.rotate(gap, -tg, origin=h_, use_radians=True)
+                x1_ = max(c_[0] for c_ in r_.exterior.coords); cy_ = r_.centroid.y; gw = geo[k]['gw'] or geo[k]['w0']
+                if dl > 0:      # partie ajoutee, percee sur toute l'epaisseur du mur (le tableau peut etre plus epais ou en biais)
+                    s_ = r_.union(box(x1_ - 0.02, cy_ - r_ep, x1_ + dl, cy_ + r_ep))
+                else:           # ouverture raccourcie du cote oppose a la charniere
+                    s_ = r_.intersection(box(x1_ - 10, cy_ - 10, x1_ + dl, cy_ + 10))
+                g2 = affinity.rotate(s_, tg, origin=h_, use_radians=True).buffer(0.004, join_style=2)
+                print(f'  porte {k} : largeur {geo[k]["w0"]:.2f} -> {geo[k]["w0"] + dl:.2f} m, ouverture {gw:.2f} -> {gw + dl:.2f} m')
+            ng = affinity.translate(g2, ddx, ddy).intersection(filled)
+            ng = ng if dl else ng.buffer(-0.005).buffer(0.005)
             W = filled.difference(ng)
+            if dl:      # pas de lamelle de mur oubliee autour de la nouvelle ouverture (tableau en biais, angle)
+                loc_ = W.intersection(ng.buffer(0.15))
+                W = W.difference(loc_.difference(loc_.buffer(-0.012, join_style='mitre').buffer(0.012, join_style='mitre')).buffer(0.001))
             lintels = lintels.difference(gap.buffer(0.03))
             extra_lintels = [(g_.difference(gap.buffer(0.03)), h_) for g_, h_ in extra_lintels] + [(ng, LINTEL + ddz)]
             if ddz > 0: alleges.append((ng, ddz))           # porte ou fenetre surelevee : mur plein en dessous
@@ -338,9 +360,15 @@ def main(src, dst, cfg='reglages.json'):
             vitre = any(l.buffer(0.05).contains(q) for q in vit)
             h_, a0 = door_info[k]; el = f'{n}_porte_{k}'
             ouv = (DEP.get(el) or {}).get('ouverture_deg')
+            dl = largeur(el, geo[k]['w0'])
+            if dl:      # largeur reglee : le vantail s'allonge depuis sa charniere
+                tl = geo[k]['tl']; l = affinity.rotate(l, -tl, origin=h_, use_radians=True)
+                l = affinity.rotate(affinity.scale(l, (geo[k]['w0'] + dl) / geo[k]['w0'], 1, origin=h_), tl, origin=h_, use_radians=True)
             if ouv is not None and abs(float(ouv) - a0) > 0.05:      # angle d'ouverture regle : rotation autour de la charniere
                 l = affinity.rotate(l, float(ouv) - a0, origin=h_)
-            portes_out.append(dict(element=el, charniere=(h_.x + sx, h_.y + sy), ouverture_plan_deg=a0, axe_mur=axe_mur.get(k)))
+            portes_out.append(dict(element=el, charniere=(h_.x + sx, h_.y + sy), ouverture_plan_deg=a0, axe_mur=axe_mur.get(k),
+                                   direction_plan_deg=round(math.degrees(geo[k]['tl']), 2), largeur_plan_m=round(geo[k]['w0'], 3),
+                                   largeur_ouverture_m=round(geo[k]['gw'], 3) if geo[k]['gw'] else None))
             l = affinity.translate(l, sx, sy)
             if vitre:
                 add(f'{n}_porte_{k}__chassis', solid(P.extrude(l.difference(l.buffer(-0.03)) if l.buffer(-0.03).area > 0 else l, z + sz, hv, None)), mats['chassis'])
@@ -451,7 +479,8 @@ def main(src, dst, cfg='reglages.json'):
     out = dict(M=M, cx=float(c[0]), cz=float(c[2]), niveaux=[dict(nom=nv['nom'], y=float(Z[k]), dx=shift[k][0], dy=shift[k][1]) for k, nv in enumerate(niveaux)], pieces=[])
     out['murs'] = [[ring(r_) for r_ in lv_] for lv_ in walls_out]
     out['marches'] = marches_out
-    out['portes'] = [dict(element=d_['element'], charniere=[round(d_['charniere'][0] - c[0], 3), round(-d_['charniere'][1] - c[2], 3)], ouverture_plan_deg=d_['ouverture_plan_deg'], axe_mur=d_['axe_mur']) for d_ in portes_out]
+    out['portes'] = [dict(element=d_['element'], charniere=[round(d_['charniere'][0] - c[0], 3), round(-d_['charniere'][1] - c[2], 3)], ouverture_plan_deg=d_['ouverture_plan_deg'], axe_mur=d_['axe_mur'],
+                                       direction_plan_deg=d_['direction_plan_deg'], largeur_plan_m=d_['largeur_plan_m'], largeur_ouverture_m=d_['largeur_ouverture_m']) for d_ in portes_out]
     for r in rooms_out:
         g = r.pop('poly')
         r['contours'] = [dict(ext=ring(p_.exterior), trous=[ring(h) for h in p_.interiors]) for p_ in P.polys(g)]
