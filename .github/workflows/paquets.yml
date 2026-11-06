@@ -1,0 +1,27 @@
+# Construit les installateurs macOS (.dmg) et Windows (.exe) à chaque version (tag v*) ou à la demande.
+name: Paquets
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+jobs:
+  paquet:
+    strategy:
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npx electron-builder --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+      - uses: actions/upload-artifact@v4
+        with:
+          name: atelier-3d-${{ matrix.os }}
+          path: |
+            dist/*.dmg
+            dist/*.exe

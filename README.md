@@ -40,3 +40,5 @@ npm start
 ## Paquets
 
 `npm run dist:mac` produit un .dmg (à lancer sur un Mac), `npm run dist:win` un installateur .exe (sur Windows). Pour l'instant, Python doit être installé sur la machine. L'intégration de Python dans l'installateur viendra ensuite.
+
+Le plus simple : sur GitHub, onglet Actions, lancer « Paquets ». Le .dmg et le .exe sont construits sur des machines macOS et Windows, puis proposés au téléchargement. Ils ne sont pas encore signés : au premier lancement, macOS demande d'ouvrir l'app par clic droit › Ouvrir, et Windows affiche « Informations complémentaires › Exécuter quand même ».
