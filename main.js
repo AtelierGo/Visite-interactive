@@ -13,7 +13,7 @@ if (process.platform === 'darwin') {
 }
 const MOTEUR = path.join(RACINE.replace('app.asar', 'app.asar.unpacked'), 'moteur', 'build_v4.py');   // Python ne lit pas dans l'archive asar
 const EXEMPLE = path.join(RACINE, 'exemples', 'rue-des-balances');
-const THREE_DIR = path.join(RACINE, 'node_modules', 'three');
+const THREE_DIR = path.join(RACINE, 'vendor', 'three');   // copie locale : electron-builder écarte les dossiers « examples » de node_modules
 const PARAMS = () => path.join(app.getPath('userData'), 'parametres.json');
 
 let win = null;
@@ -104,11 +104,11 @@ function assemblerEditeur() {
   const t = fs.readFileSync(path.join(RACINE, 'editeur', 'template.html'), 'utf-8');
   const esc = s => s.replace(/<\//g, '<\\/');
   const glb = fs.readFileSync(sortie('maquette.glb'));
-  const url = f => 'file://' + path.join(THREE_DIR, f).replace(/\\/g, '/');
+  const url = f => require('url').pathToFileURL(path.join(THREE_DIR, f)).href;   // espaces et lecteurs Windows encodés
   const html = t
-    .replace('https://cdn.jsdelivr.net/npm/three@0.147.0/build/three.min.js', url('build/three.min.js'))
-    .replace('https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/loaders/GLTFLoader.js', url('examples/js/loaders/GLTFLoader.js'))
-    .replace('https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/controls/OrbitControls.js', url('examples/js/controls/OrbitControls.js'))
+    .replace('https://cdn.jsdelivr.net/npm/three@0.147.0/build/three.min.js', url('three.min.js'))
+    .replace('https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/loaders/GLTFLoader.js', url('GLTFLoader.js'))
+    .replace('https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/controls/OrbitControls.js', url('OrbitControls.js'))
     .replace('__TITRE__', projet.nom.replace(/</g, '&lt;'))
     .replace('__PLAN__', projet.plan.replace(/</g, '&lt;'))
     .replace('__TAILLE__', (glb.length / 1e6).toFixed(1).replace('.', ',') + ' Mo')
