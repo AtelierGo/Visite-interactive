@@ -1,6 +1,6 @@
 {
   "name": "atelier-3d",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Du plan Illustrator à l’échelle à la visite 3D (GLB).",
   "main": "main.js",
   "scripts": {
@@ -27,7 +27,8 @@
       "moteur/**/*",
       "!moteur/**/__pycache__",
       "exemples/**/*",
-      "vendor/**/*"
+      "vendor/**/*",
+      "visite/template.html"
     ],
     "asarUnpack": [
       "moteur/**/*"

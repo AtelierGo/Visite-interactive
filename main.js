@@ -135,6 +135,46 @@ async function ouvrirProjet(dossier) {
   win.loadFile(assemblerEditeur());
   construireMenu();
 }
+// ---------- visite virtuelle : une page autonome (maquette et code inclus) ----------
+function assemblerVisite() {
+  const t = fs.readFileSync(path.join(RACINE, 'visite', 'template.html'), 'utf-8');
+  const lib = f => fs.readFileSync(path.join(THREE_DIR, f), 'utf-8').replace(/<\/script/gi, '<\\/script');
+  const pcs = JSON.parse(fs.readFileSync(sortie('maquette.pieces.json'), 'utf-8'));
+  const V = { niveaux: pcs.niveaux.map(n => ({ nom: n.nom, y: n.y })), portes_bloquent: false,
+    pieces: pcs.pieces.map(p => ({ nom: p.nom, type: p.type, niveau: p.niveau, centre: p.centre, supprimee: !!p.supprimee })) };
+  const esc = x => x.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  return t.replace(/__TITRE__/g, () => esc(projet.nom))
+    .replace('__THREE__', () => lib('three.min.js')).replace('__GLTF__', () => lib('GLTFLoader.js'))
+    .replace('__VISITE__', () => JSON.stringify(V).replace(/<\//g, '<\\/'))
+    .replace('__GLB__', () => fs.readFileSync(sortie('maquette.glb')).toString('base64'));
+}
+let fenVisite = null;
+function ouvrirVisite() {
+  if (!projet) return;
+  const f = path.join(app.getPath('userData'), 'visite.html'); fs.writeFileSync(f, assemblerVisite());
+  if (fenVisite && !fenVisite.isDestroyed()) { fenVisite.loadFile(f); fenVisite.focus(); return; }
+  fenVisite = new BrowserWindow({ width: 1280, height: 800, title: `Visite · ${projet.nom}`, backgroundColor: '#1b1f1d', webPreferences: { contextIsolation: true, sandbox: true } });
+  fenVisite.setMenuBarVisibility(false); fenVisite.loadFile(f);
+}
+async function exporterVisite() {
+  if (!projet) return {};
+  const r = await dialog.showOpenDialog(win, { title: 'Dossier où exporter la visite', properties: ['openDirectory', 'createDirectory'], buttonLabel: 'Exporter ici' });
+  if (r.canceled || !r.filePaths[0]) return {};
+  const dir = path.join(r.filePaths[0], `Visite ${projet.nom}`.replace(/[\\/:*?"<>|]/g, '-'));
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'visite.html'), assemblerVisite());
+  fs.copyFileSync(sortie('maquette.glb'), path.join(dir, 'maquette.glb'));
+  fs.writeFileSync(path.join(dir, 'LISEZMOI.txt'), [
+    `Visite virtuelle : ${projet.nom}`, '',
+    'visite.html : la visite complète en une seule page. Double-cliquez pour l\'ouvrir, ou envoyez-la sur votre site.',
+    'maquette.glb : la maquette 3D seule, pour un autre lecteur ou un casque VR.', '',
+    'Pour intégrer la visite dans une page de votre site, mettez visite.html sur le site puis collez :',
+    '<iframe src="visite.html" style="width:100%;height:600px;border:0" allow="xr-spatial-tracking; fullscreen" allowfullscreen></iframe>', '',
+    'Commandes : glisser pour regarder, flèches ou Z Q S D pour marcher, clic au sol pour y aller, menu « Aller à » pour changer de pièce.',
+    'En VR (casque compatible WebXR, par exemple Meta Quest) : bouton « Entrer en VR », joystick gauche pour marcher, joystick droit pour pivoter.' ].join('\n'));
+  shell.showItemInFolder(path.join(dir, 'visite.html'));
+  return { chemin: dir };
+}
 function etat() {
   try { return 'Dernière génération : ' + fs.statSync(sortie('maquette.glb')).mtime.toLocaleString('fr-FR', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' }); }
   catch { return ''; }
@@ -203,6 +243,8 @@ ipcMain.handle('generer', async (_e, R) => {
   return r;
 });
 ipcMain.handle('exporter-glb', exporterGLB);
+ipcMain.handle('ouvrir-visite', () => ouvrirVisite());
+ipcMain.handle('exporter-visite', exporterVisite);
 ipcMain.on('etat', e => { e.returnValue = projet ? etat() : ''; });
 ipcMain.on('modifie', (_e, n) => { modifications = n; });
 ipcMain.handle('accueil', () => ({ recents: config().recents.filter(d => fs.existsSync(path.join(d, 'projet.json'))).map(d => { try { return lireProjet(d); } catch { return null; } }).filter(Boolean),
@@ -230,6 +272,8 @@ function construireMenu() {
       { label: 'Enregistrer les réglages', accelerator: 'CmdOrCtrl+S', enabled: p, click: async () => { enregistrerReglages(await demanderReglages()); modifications = 0; } },
       { label: 'Valider les modifications et régénérer', accelerator: 'CmdOrCtrl+G', enabled: p, click: genererDepuisMenu },
       { label: 'Enregistrer le GLB…', accelerator: 'CmdOrCtrl+E', enabled: p, click: exporterGLB },
+      { label: 'Ouvrir la visite virtuelle', accelerator: 'CmdOrCtrl+Shift+V', enabled: p, click: ouvrirVisite },
+      { label: 'Exporter la visite virtuelle…', enabled: p, click: exporterVisite },
       { type: 'separator' },
       { label: 'Afficher le dossier du projet', enabled: p, click: () => shell.openPath(projet.dossier) },
       { label: 'Journal du moteur', enabled: p, click: () => shell.openPath(sortie('journal.txt')) },

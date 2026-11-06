@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="fr">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>__TITRE__ · visite</title>
+<style>
+/* Visite virtuelle : page autonome (maquette et code inclus), à ouvrir telle quelle ou à intégrer dans un site (iframe). */
+:root { --bg: #1b1f1d; --fg: #f1f4f2; --muted: #b7c0bb; --chip: rgba(20, 24, 22, .72); --line: rgba(255, 255, 255, .16); --accent: #7cc3a6;
+  --sans: system-ui, -apple-system, "Segoe UI", sans-serif; }
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font: 14px/1.4 var(--sans); overflow: hidden; }
+canvas { display: block; touch-action: none; }
+.ui { position: fixed; left: max(12px, env(safe-area-inset-left)); right: max(12px, env(safe-area-inset-right)); top: max(12px, env(safe-area-inset-top));
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center; pointer-events: none; }
+.ui > * { pointer-events: auto; }
+.chip { background: var(--chip); border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+.ui h1 { font-size: 14px; font-weight: 600; margin: 0; }
+select, button { font: inherit; color: var(--fg); background: var(--chip); border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px; cursor: pointer;
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+select option { color: #111; }
+button:hover, select:hover { border-color: var(--accent); }
+#vr[hidden] { display: none; }
+.aide { position: fixed; left: 50%; bottom: max(14px, env(safe-area-inset-bottom)); transform: translateX(-50%); font-size: 12px; color: var(--muted);
+  text-align: center; max-width: calc(100% - 24px); }
+.pad { position: fixed; right: max(14px, env(safe-area-inset-right)); bottom: max(46px, calc(env(safe-area-inset-bottom) + 40px)); display: none; gap: 6px;
+  grid-template-columns: repeat(3, 46px); grid-template-rows: repeat(2, 46px); }
+.pad button { border-radius: 10px; padding: 0; font-size: 18px; }
+@media (pointer: coarse) { .pad { display: grid; } }
+#charge { position: fixed; inset: 0; display: grid; place-items: center; color: var(--muted); }
+</style>
+<body>
+<div class="ui">
+  <h1 class="chip">__TITRE__</h1>
+  <select id="aller" aria-label="Aller à une pièce"></select>
+  <button id="vr" hidden>Entrer en VR</button>
+</div>
+<div id="charge">Chargement de la visite…</div>
+<div class="aide chip" id="aide">Glisser pour regarder · flèches ou Z Q S D pour marcher · clic au sol pour y aller</div>
+<div class="pad" aria-hidden="true"><span></span><button data-k="av">▲</button><span></span><button data-k="g">◀</button><button data-k="ar">▼</button><button data-k="d">▶</button></div>
+<script>__THREE__</script>
+<script>__GLTF__</script>
+<script type="application/json" id="visite">__VISITE__</script>
+<script type="application/octet-stream" id="glb">__GLB__</script>
+<script>
+(function () {
+  const V = JSON.parse(document.getElementById('visite').textContent);
+  const EYE = 1.6, STEP = 0.45, RADIUS = 0.4, SPEED = 1.4;
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); renderer.outputEncoding = THREE.sRGBEncoding;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.xr.enabled = true;
+  document.body.prepend(renderer.domElement);
+  const scene = new THREE.Scene(); scene.background = new THREE.Color(0xdfe3e1);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x6d706e, 0.7));
+  const sun = new THREE.DirectionalLight(0xfff4e6, 0.8); sun.position.set(5, 12, 8); scene.add(sun);
+  // le visiteur : « corps » au sol, caméra à hauteur d'yeux (en VR, la hauteur vient du casque)
+  const body = new THREE.Group(); scene.add(body);
+  const camera = new THREE.PerspectiveCamera(70, 1, 0.05, 200); camera.position.y = EYE; body.add(camera);
+  let yaw = 0, pitch = 0;
+  const solid = [], ground = [];
+  const isGround = n => /_(sol(_p\d+)?|marches|escalier|colimacon_bois|dalle)$/.test(n);
+  const isSolid = n => /_(murs|vitrine_mur|vitrages|chassis|placard_\d+|poteau_\d+|garde_corps|colimacon_acier)$/.test(n) || /_porte_\d+(__|$)/.test(n) && V.portes_bloquent;
+  function resize() { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); }
+  addEventListener('resize', resize); resize();
+
+  // ---------- sol et murs ----------
+  const ray = new THREE.Raycaster(); const DOWN = new THREE.Vector3(0, -1, 0);
+  function groundAt(x, y, z) {   // sol le plus haut sous (x, y + STEP)
+    ray.set(new THREE.Vector3(x, y + STEP, z), DOWN); ray.far = 6;
+    const h = ray.intersectObjects(ground, false)[0]; return h ? h.point.y : null;
+  }
+  function blocked(from, dir, dist) {
+    for (const hgt of [0.35, 1.0, 1.5]) {
+      ray.set(new THREE.Vector3(from.x, from.y + hgt, from.z), dir); ray.far = dist + RADIUS;
+      const h = ray.intersectObjects(solid, false)[0]; if (h) return h;
+    }
+    return null;
+  }
+  let vy = 0;
+  function moveBy(dx, dz, dt) {
+    const p = body.position; let d = new THREE.Vector3(dx, 0, dz); const L = d.length(); if (L < 1e-6) return settle(dt);
+    let dir = d.clone().normalize(), hit = blocked(p, dir, L);
+    if (hit) {   // glisser le long du mur
+      const nrm = hit.face.normal.clone().transformDirection(hit.object.matrixWorld); nrm.y = 0; nrm.normalize();
+      d.sub(nrm.multiplyScalar(d.dot(nrm))); const L2 = d.length();
+      if (L2 < 1e-5 || blocked(p, d.clone().normalize(), L2)) return settle(dt);
+    }
+    const g = groundAt(p.x + d.x, p.y, p.z + d.z);
+    if (g === null || g > p.y + STEP) return settle(dt);      // vide ou marche trop haute
+    p.x += d.x; p.z += d.z; settle(dt);
+  }
+  function settle(dt) {   // suivre le sol : monter une marche, descendre, tomber doucement
+    const p = body.position, g = groundAt(p.x, p.y, p.z);
+    if (g === null) return;
+    if (g >= p.y - 0.02) { p.y += Math.min(g - p.y, 4 * dt + 0.02); vy = 0; }
+    else { vy = Math.min(vy + 9.8 * dt, 6); p.y = Math.max(g, p.y - Math.max(vy * dt, (p.y - g) * 0.35)); }
+  }
+  function placeAt(x, z, y) { body.position.set(x, y + 0.1, z); const g = groundAt(x, y + 0.1, z); if (g !== null) body.position.y = g; }
+
+  // ---------- regard et déplacement ----------
+  const keys = {};
+  addEventListener('keydown', e => { keys[e.key.toLowerCase()] = true; if (e.key.startsWith('Arrow')) e.preventDefault(); });
+  addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+  let drag = null, target = null;
+  renderer.domElement.addEventListener('pointerdown', e => { drag = { x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY }; renderer.domElement.setPointerCapture(e.pointerId); });
+  renderer.domElement.addEventListener('pointermove', e => {
+    if (!drag) return; yaw += (e.clientX - drag.x) * 0.0045; pitch += (e.clientY - drag.y) * 0.0045;
+    pitch = Math.max(-1.3, Math.min(1.3, pitch)); drag.x = e.clientX; drag.y = e.clientY; });
+  renderer.domElement.addEventListener('pointerup', e => {
+    const moved = drag && Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) > 5; drag = null; if (moved) return;
+    const ndc = new THREE.Vector2(e.clientX / innerWidth * 2 - 1, -e.clientY / innerHeight * 2 + 1);
+    ray.setFromCamera(ndc, camera); ray.far = 40;
+    const h = ray.intersectObjects(solid.concat(ground), false)[0];
+    if (h && ground.includes(h.object)) target = h.point.clone();     // clic au sol : y aller
+  });
+  renderer.domElement.addEventListener('wheel', e => { e.preventDefault(); const f = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw)); moveBy(f.x * -e.deltaY * 0.002, f.z * -e.deltaY * 0.002, 0.016); }, { passive: false });
+  const pad = {}; document.querySelectorAll('.pad button').forEach(b => {
+    b.addEventListener('pointerdown', e => { e.preventDefault(); pad[b.dataset.k] = true; });
+    ['pointerup', 'pointerleave', 'pointercancel'].forEach(t => b.addEventListener(t, () => { pad[b.dataset.k] = false; })); });
+
+  // ---------- pièces ----------
+  const sel = document.getElementById('aller');
+  const pieces = (V.pieces || []).filter(p => !p.supprimee);
+  sel.innerHTML = '<option value="">Aller à…</option>' + pieces.map((p, i) => `<option value="${i}"></option>`).join('');
+  pieces.forEach((p, i) => { sel.options[i + 1].textContent = p.nom + (V.niveaux.length > 1 ? ' · ' + p.niveau : ''); });
+  function bestYaw() {     // regarder vers le plus grand dégagement de la pièce
+    let best = yaw, far = -1;
+    for (let k = 0; k < 24; k++) { const a = k * Math.PI / 12, dir = new THREE.Vector3(-Math.sin(a), 0, -Math.cos(a));
+      ray.set(new THREE.Vector3(body.position.x, body.position.y + 1.4, body.position.z), dir); ray.far = 40;
+      const h = ray.intersectObjects(solid, false)[0], d = h ? h.distance : 40; if (d > far) { far = d; best = a; } }
+    return best;
+  }
+  function goRoom(p) { const nv = V.niveaux.find(n => n.nom === p.niveau) || V.niveaux[0]; target = null; placeAt(p.centre[0], p.centre[1], nv.y + 1.2); yaw = bestYaw(); pitch = 0; }
+  sel.addEventListener('change', () => { if (sel.value !== '') goRoom(pieces[+sel.value]); sel.value = ''; renderer.domElement.focus(); });
+
+  // ---------- VR ----------
+  const vrBtn = document.getElementById('vr');
+  if (navigator.xr && navigator.xr.isSessionSupported) navigator.xr.isSessionSupported('immersive-vr').then(ok => { vrBtn.hidden = !ok; }).catch(() => {});
+  let session = null;
+  vrBtn.addEventListener('click', async () => {
+    if (session) { session.end(); return; }
+    try {
+      session = await navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor'] });
+      renderer.xr.setReferenceSpaceType('local-floor'); await renderer.xr.setSession(session);
+      camera.position.y = 0; vrBtn.textContent = 'Quitter la VR';
+      session.addEventListener('end', () => { session = null; camera.position.y = EYE; vrBtn.textContent = 'Entrer en VR'; });
+    } catch (e) { vrBtn.textContent = 'VR indisponible'; }
+  });
+  let snapReady = true;
+  function xrInput(dt) {   // joystick gauche : marcher ; joystick droit : pivoter de 30°
+    if (!session) return;
+    for (const src of session.inputSources) {
+      const gp = src.gamepad; if (!gp || gp.axes.length < 2) continue;
+      const ax = gp.axes.length >= 4 ? [gp.axes[2], gp.axes[3]] : [gp.axes[0], gp.axes[1]];
+      if (src.handedness === 'right') {
+        if (Math.abs(ax[0]) > 0.7 && snapReady) { body.rotation.y -= Math.sign(ax[0]) * Math.PI / 6; snapReady = false; }
+        if (Math.abs(ax[0]) < 0.3) snapReady = true;
+      } else if (Math.abs(ax[0]) > 0.15 || Math.abs(ax[1]) > 0.15) {
+        const head = new THREE.Vector3(); renderer.xr.getCamera(camera).getWorldDirection(head); head.y = 0; head.normalize();
+        const right = new THREE.Vector3(-head.z, 0, head.x);
+        const v = head.multiplyScalar(-ax[1]).add(right.multiplyScalar(ax[0])).multiplyScalar(SPEED * dt);
+        moveBy(v.x, v.z, dt);
+      }
+    }
+  }
+
+  // ---------- boucle ----------
+  const clock = new THREE.Clock();
+  function frame() {
+    const dt = Math.min(clock.getDelta(), 0.05);
+    if (!session) {
+      body.rotation.y = yaw; camera.rotation.x = -pitch;
+      let f = 0, s = 0, turn = 0;
+      if (keys['arrowup'] || keys['z'] || keys['w'] || pad.av) f += 1;
+      if (keys['arrowdown'] || keys['s'] || pad.ar) f -= 1;
+      if (keys['q'] || keys['a']) s -= 1; if (keys['d']) s += 1;
+      if (keys['arrowleft'] || pad.g) turn += 1; if (keys['arrowright'] || pad.d) turn -= 1;
+      yaw += turn * 1.6 * dt;
+      if (f || s) { target = null; const run = keys['shift'] ? 2 : 1;
+        const fx = -Math.sin(yaw), fz = -Math.cos(yaw), rx = Math.cos(yaw), rz = -Math.sin(yaw);
+        moveBy((fx * f + rx * s) * SPEED * run * dt, (fz * f + rz * s) * SPEED * run * dt, dt); }
+      else if (target) {
+        const d = new THREE.Vector3(target.x - body.position.x, 0, target.z - body.position.z), L = d.length();
+        if (L < 0.08) target = null;
+        else { const before = body.position.clone(); d.multiplyScalar(Math.min(L, SPEED * dt) / L); moveBy(d.x, d.z, dt);
+          if (body.position.distanceTo(before) < 1e-4) target = null; }
+      } else settle(dt);
+    } else { xrInput(dt); settle(dt); }
+    renderer.render(scene, camera);
+  }
+
+  // ---------- chargement ----------
+  const bin = Uint8Array.from(atob(document.getElementById('glb').textContent.trim()), c => c.charCodeAt(0)).buffer;
+  new THREE.GLTFLoader().parse(bin, '', g => {
+    scene.add(g.scene); g.scene.updateMatrixWorld(true);
+    g.scene.traverse(o => { if (!o.isMesh) return;
+      if (/_voute$/.test(o.name)) o.material.side = THREE.DoubleSide;
+      if (isGround(o.name)) ground.push(o); else if (isSolid(o.name)) solid.push(o); });
+    document.getElementById('charge').remove();
+    const start = pieces.find(p => p.type === 'entree') || pieces[0];
+    if (start) goRoom(start); else placeAt(0, 0, 1.2);
+    if (start && V.regard_deg != null) yaw = V.regard_deg * Math.PI / 180;
+    renderer.setAnimationLoop(frame);
+    setTimeout(() => { const a = document.getElementById('aide'); if (a) a.style.opacity = '0.75'; }, 6000);
+  }, () => { document.getElementById('charge').textContent = 'La maquette n’a pas pu être chargée.'; });
+})();
+</script>
+</body>
+</html>

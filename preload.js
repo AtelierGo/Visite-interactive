@@ -8,6 +8,8 @@ contextBridge.exposeInMainWorld('atelier', {
   // éditeur
   generer: R => ipcRenderer.invoke('generer', R),
   exporterGLB: () => ipcRenderer.invoke('exporter-glb'),
+  ouvrirVisite: () => ipcRenderer.invoke('ouvrir-visite'),
+  exporterVisite: () => ipcRenderer.invoke('exporter-visite'),
   etat: () => ipcRenderer.sendSync('etat'),
   modifie: n => ipcRenderer.send('modifie', n),
   fournir: f => { fournisseur = f; },

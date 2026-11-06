@@ -1130,7 +1130,17 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
       d.appendChild(ul);
       const b = document.createElement('button'); b.className = 'btn'; b.textContent = 'Passer à hauteur d’yeux';
       b.addEventListener('click', () => document.getElementById('view-eye').click());
-      groupsEl.appendChild(b); groupsEl.appendChild(d);
+      groupsEl.appendChild(b);
+      if (window.atelier && window.atelier.ouvrirVisite) {   // logiciel : visite virtuelle de la dernière maquette générée
+        const g = document.createElement('div'); g.className = 'group';
+        g.innerHTML = '<h3>Visite virtuelle</h3><p class="note">Marchez dans la maquette comme un visiteur : flèches ou Z Q S D, clic au sol, menu des pièces, mode VR avec un casque. La visite montre la dernière maquette validée.</p>';
+        const row = document.createElement('div'); row.style.display = 'flex'; row.style.gap = '8px'; row.style.flexWrap = 'wrap';
+        const o = document.createElement('button'); o.className = 'btn'; o.textContent = 'Ouvrir la visite'; o.addEventListener('click', () => window.atelier.ouvrirVisite());
+        const x = document.createElement('button'); x.className = 'btn ghost'; x.textContent = 'Exporter la visite…';
+        x.addEventListener('click', async () => { const r_ = await window.atelier.exporterVisite(); if (r_ && r_.chemin) { const p_ = document.createElement('p'); p_.className = 'note'; p_.textContent = 'Visite exportée : ' + r_.chemin; g.appendChild(p_); } });
+        row.appendChild(o); row.appendChild(x); g.appendChild(row); groupsEl.appendChild(g);
+      }
+      groupsEl.appendChild(d);
     }
     if (s.exp) {
       const d = document.createElement('div'); d.className = 'group export';
@@ -1147,6 +1157,9 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
         () => { ta.focus(); ta.select(); b.textContent = 'Sélectionné, copiez avec Ctrl+C'; }); });
       const p = document.createElement('p'); p.className = 'note'; p.textContent = 'Le plus simple : le bouton « Valider les modifications » en haut. Sinon, collez ce texte dans la conversation.';
       if (window.atelier) {
+        const vx = document.createElement('button'); vx.className = 'btn'; vx.textContent = 'Exporter la visite virtuelle…';
+        vx.addEventListener('click', async () => { const r_ = await window.atelier.exporterVisite(); if (r_ && r_.chemin) p.textContent = 'Visite exportée : ' + r_.chemin; });
+        d.appendChild(vx);
         p.textContent = 'Le bouton « Valider les modifications » en haut enregistre ces réglages et régénère la maquette. Le GLB enregistré est celui de la dernière génération.';
         const g = document.createElement('button'); g.className = 'btn'; g.textContent = 'Enregistrer le GLB…';
         g.addEventListener('click', async () => { const r_ = await window.atelier.exporterGLB(); if (r_ && r_.chemin) { p.textContent = 'GLB enregistré : ' + r_.chemin; } });
