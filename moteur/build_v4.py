@@ -1,7 +1,7 @@
 """Prototype v0.7 : plan Illustrator -> GLB. Aucun reglage dans le code : tout vient de reglages.json,
 organise comme les etapes de l'editeur (import, murs, ouvertures et escaliers, materiaux).
 Usage : python3 build_v4.py plan.ai sortie.glb [reglages.json]"""
-import sys, json, math, subprocess, numpy as np, pymupdf, trimesh
+import sys, re, json, math, subprocess, numpy as np, pymupdf, trimesh
 from shapely.geometry import Point, box, LineString
 from shapely.ops import unary_union
 from shapely import affinity
@@ -111,6 +111,11 @@ def main(src, dst, cfg='reglages.json'):
         else: mesh.visual = trimesh.visual.TextureVisuals(material=m)
         scene.add_geometry(mesh, geom_name=name)
 
+    DEP = esc.get('deplacements', {})      # {element: {x_m, y_m, z_m}} : elements deplaces dans l'editeur (X est, Y nord, Z haut)
+    def deplacement(el):
+        d_ = DEP.get(el) or {}
+        return (float(d_.get('x_m', 0) or 0), float(d_.get('y_m', 0) or 0), float(d_.get('z_m', 0) or 0))
+
     clean = murs['nettoyage_bandes_etroites_m'] / 2
     vaults = {}
     pcfg_p = imp.get('pieces', {})
@@ -124,6 +129,7 @@ def main(src, dst, cfg='reglages.json'):
         doors = mv(unary_union([box(d['rect'].x0 * M, -d['rect'].y1 * M, d['rect'].x1 * M, -d['rect'].y0 * M)
                      for d in page.get_drawings() if d.get('layer', '').startswith(cal['portes'])]).buffer(murs['linteaux_marge_portes_m']))
         lintels = closed.difference(W).intersection(doors).buffer(-0.01).buffer(0.01)
+        n = f'niveau{i}'
         # linteaux ajustes : relier les deux murs de part et d'autre de l'ouverture (meme epaisseur que les murs)
         extra_lintels = []     # linteaux traces a la main sur une ouverture sans porte : (forme, hauteur du dessous)
         for la in [x for x in murs.get('linteaux_traces', []) if by_name[x['niveau']] == i]:
@@ -141,7 +147,34 @@ def main(src, dst, cfg='reglages.json'):
             hull = unary_union(P.polys(W.intersection(zone))).convex_hull.difference(W).buffer(-0.01).buffer(0.01)
             lintels = lintels.difference(zone).union(hull)
             print(f"  linteau ajuste : {la['nom']} ({hull.area:.2f} m2)")
-        big = W.buffer(FOOT, join_style='mitre').buffer(-FOOT, join_style='mitre')
+        # portes deplacees (etape Ouvertures) : l'ancienne ouverture est rebouchee, le mur est perce au nouvel endroit
+        pcfg = esc.get('portes', {})
+        lv = PO.leaves(page, [cal['portes'], cal.get('portes_coulissantes', 'Porte coulissante')], dx, dy,
+                       pcfg.get('longueur_min_trait_pt', 25), pcfg.get('epaisseur_vantail_m', 0.04))
+        # ouvertures des portes dans les murs, apres les linteaux ajustes. On ne garde que la partie de l'epaisseur d'un mur :
+        # une petite piece refermee par la fermeture (toilettes) n'est pas une ouverture.
+        r_ep = murs.get('epaisseur_max_ouverture_m', 0.80) / 2
+        def ouverture(g_):    # bande entre les deux tableaux (bouts de mur qui bordent l'ouverture), sans ce qui deborde dans les pieces
+            b_ = W.intersection(g_.buffer(0.03)).convex_hull.intersection(g_)
+            return b_.difference(b_.buffer(-r_ep).buffer(r_ep, join_style='mitre')).buffer(-0.005).buffer(0.005)
+        ouvertures0 = [q for g_ in P.polys(lintels) for q in P.polys(ouverture(g_)) if q.area > 0.01]
+        door_shift, alleges = {}, []
+        W0 = W                               # murs du plan : emprise du batiment et pieces restent les memes quand une porte bouge
+        for k, l in enumerate(lv):
+            ddx, ddy, ddz = deplacement(f'{n}_porte_{k}')
+            if not (ddx or ddy or ddz): continue
+            door_shift[k] = (ddx, ddy, ddz)
+            near_ = [g_ for g_ in ouvertures0 if g_.distance(l) < 0.6]
+            gap = max(near_, key=lambda g_: g_.area / (0.05 + g_.distance(l)), default=None)
+            if gap is None or gap.distance(l) > 0.6: print(f'  porte {k} : ouverture introuvable, seul le vantail bouge'); continue
+            filled = W.union(gap)
+            ng = affinity.translate(gap, ddx, ddy).intersection(filled).buffer(-0.005).buffer(0.005)
+            W = filled.difference(ng)
+            lintels = lintels.difference(gap.buffer(0.03))
+            extra_lintels = [(g_.difference(gap.buffer(0.03)), h_) for g_, h_ in extra_lintels] + [(ng, LINTEL + ddz)]
+            if ddz > 0: alleges.append((ng, ddz))           # porte ou fenetre surelevee : mur plein en dessous
+            print(f'  porte {k} deplacee de ({ddx:.2f}, {ddy:.2f}, {ddz:.2f}) m, ouverture deplacee avec')
+        big = W0.buffer(FOOT, join_style='mitre').buffer(-FOOT, join_style='mitre')
         outline = unary_union([P.Polygon(p.exterior) for p in P.polys(big)])
         walls_out.append([r_ for p_ in P.polys(W.simplify(0.005)) for r_ in [p_.exterior] + list(p_.interiors)])   # pour l'accroche de l'editeur
         # zones exclues (etape import) : rien n'y est genere, ni murs, ni sol, ni equipements
@@ -153,10 +186,10 @@ def main(src, dst, cfg='reglages.json'):
         floor = outline.difference(W)
         if i == hi and lo != hi: floor, outline = floor.difference(tremie), outline.difference(tremie)
         plinth = W.buffer(pl['epaisseur_m'], join_style='mitre').difference(W).intersection(floor)
-        n = f'niveau{i}'
         if not EX.is_empty: extra_lintels = [(g_.difference(EX), h_) for g_, h_ in extra_lintels]
         add(f'{n}_murs', solid(P.extrude(W, z, H, None) + P.extrude(lintels, z + LINTEL, H - LINTEL, None)
-                               + [m_ for g_, h_ in extra_lintels for m_ in P.extrude(g_, z + h_, H - h_, None)]), mats['murs'])
+                               + [m_ for g_, h_ in extra_lintels for m_ in P.extrude(g_, z + h_, H - h_, None)]
+                               + [m_ for g_, h_ in alleges for m_ in P.extrude(g_, z, h_, None)]), mats['murs'])
         sols, plin, marches_parts = [], [], []      # sols : (forme, z bas, epaisseur), decoupes ensuite par piece
         # zones de sol a hauteur constante : [sol, plinthes, hauteur]. Chaque marche releve la partie qui touche sa ligne, cote haut,
         # a partir de la hauteur de la zone ou elle se trouve (les marches successives se cumulent)
@@ -215,7 +248,7 @@ def main(src, dst, cfg='reglages.json'):
         to_model = lambda x, y, dx=dx, dy=dy: S.pt(x, y, dx, dy)
         prs = PI.door_rects(page, [cal['portes'], cal.get('portes_coulissantes', 'Porte coulissante')], M, mv)
         steps_l = [c['ligne_plan_pt'] for c in murs['changements_de_niveau'] if by_name[c['niveau']] == i]
-        rooms = PI.detect(W, floor, prs, pcfg_p, niveaux[i]['nom'], to_model, steps_l)
+        rooms = PI.detect(W0 if EX.is_empty else W0.difference(EX), floor, prs, pcfg_p, niveaux[i]['nom'], to_model, steps_l)
         for ci, ch in enumerate(murs['changements_de_niveau']):    # pieces de part et d'autre de chaque marche, pour l'editeur
             if by_name[ch['niveau']] != i: continue
             Lp = LineString([S.pt(x, y, dx, dy) for x, y in ch['ligne_plan_pt']]); mid = Lp.interpolate(0.5, normalized=True)
@@ -260,22 +293,37 @@ def main(src, dst, cfg='reglages.json'):
             add(f'{n}_voute', vb.mesh(z, tremie if i == lo and lo != hi else None), mats['voute'])
             print(f"  {pf['nom']} : portee {2 * vb.a:.2f} m, axe {vb.theta:.0f} deg, naissance {vb.n:.2f} m, cle {vb.n + vb.f:.2f} m")
         # portes : vantaux dessines sur le plan, vitres si un point de reglage tombe dedans
-        pcfg = esc.get('portes', {})
-        lv = PO.leaves(page, [cal['portes'], cal.get('portes_coulissantes', 'Porte coulissante')], dx, dy,
-                       pcfg.get('longueur_min_trait_pt', 25), pcfg.get('epaisseur_vantail_m', 0.04))
         vit = [Point(S.pt(*q['point'], dx, dy)) for q in pcfg.get('vantaux_vitres_plan_pt', []) if by_name[q['niveau']] == i]
-        lv = [l for l in lv if EX.is_empty or l.intersection(EX).area < 0.5 * l.area]
-        pleins = [l for l in lv if not any(l.buffer(0.05).contains(q) for q in vit)]
-        vitres = [l for l in lv if l not in pleins]
         hv = pcfg.get('hauteur_vantail_m', 2.04)
-        add(f'{n}_portes', solid([m_ for l in pleins for m_ in P.extrude(l, z, hv, None)]), mats['porte'])
+        npl = nvi = 0
+        for k, l in enumerate(lv):          # un element par vantail : niveauN_porte_K (deplacable dans l'editeur)
+            if not (EX.is_empty or l.intersection(EX).area < 0.5 * l.area): continue
+            sx, sy, sz = door_shift.get(k, (0, 0, 0))
+            vitre = any(l.buffer(0.05).contains(q) for q in vit)
+            l = affinity.translate(l, sx, sy)
+            if vitre:
+                add(f'{n}_porte_{k}__chassis', solid(P.extrude(l.difference(l.buffer(-0.03)) if l.buffer(-0.03).area > 0 else l, z + sz, hv, None)), mats['chassis'])
+                add(f'{n}_porte_{k}__vitrage', solid(P.extrude(l, z + sz + 0.06, hv - 0.12, None)), mats['verre']); nvi += 1
+            else:
+                add(f'{n}_porte_{k}', solid(P.extrude(l, z + sz, hv, None)), mats['porte']); npl += 1
         fr, gl = [], []
-        for l in vitres:
-            fr += P.extrude(l.difference(l.buffer(-0.03)) if l.buffer(-0.03).area > 0 else l, z, hv, None)
-            gl += P.extrude(l, z + 0.06, hv - 0.12, None)
-        print(f'  portes : {len(pleins)} pleines, {len(vitres)} vitree(s)')
+        print(f'  portes : {npl} pleines, {nvi} vitree(s)')
         hint = S.pt(*centers[i][0], dx, dy)
         for v in [v for v in esc.get('vitrines', []) if by_name[v['niveau']] == i]:
+            # porte de la vitrine deplacee : sa baie (et les montants qui la bordent) glisse le long de la vitrine, sans trou dans le vitrage
+            p0_, p1_ = S.pt(*v['de_plan_pt'], dx, dy), S.pt(*v['a_plan_pt'], dx, dy); L_ = math.dist(p0_, p1_)
+            ux_, uy_ = (p1_[0] - p0_[0]) / L_, (p1_[1] - p0_[1]) / L_
+            baies, mont = [list(b_) for b_ in v.get('baies_porte_u_m', [])], list(v.get('montants_u_m', []))
+            for k, (sx, sy, sz) in door_shift.items():
+                c_ = lv[k].centroid
+                if LineString([p0_, p1_]).distance(c_) > 0.6: continue
+                u0, du = (c_.x - p0_[0]) * ux_ + (c_.y - p0_[1]) * uy_, sx * ux_ + sy * uy_
+                for b_ in baies:
+                    if b_[0] - 0.3 <= u0 <= b_[1] + 0.3:
+                        mont = [m_ + du if min(abs(m_ - b_[0]), abs(m_ - b_[1])) < 0.08 else m_ for m_ in mont]
+                        b_[0], b_[1] = b_[0] + du, b_[1] + du
+                        print(f'  {v["nom"]} : baie de la porte {k} glissee de {du:.2f} m')
+            v = dict(v, baies_porte_u_m=baies, montants_u_m=mont)
             wm, fm, gm = PO.vitrine(v, dx, dy, z, H, hint)
             add(f'{n}_vitrine_mur', solid(wm), mats['murs']); fr += fm; gl += gm
             print(f"  {v['nom']} : naissance {v['hauteur_naissance_m']} m, cle {v['hauteur_cle_m']} m")
@@ -284,14 +332,15 @@ def main(src, dst, cfg='reglages.json'):
         pc = eq.get('placards', {})
         fronts, body = EQ.placards(page, cal.get('placards', 'Placards'), W, floor, dx, dy, pc.get('profondeur_m', 0.62), pc.get('longueur_min_trait_pt', 25))
         if body is not None and not body.is_empty:
-            add(f'{n}_placards', solid(P.extrude(body, z, pc.get('hauteur_m', 2.4), None)), mats['placard'])
+            for k, b_ in enumerate(P.polys(body)): add(f'{n}_placard_{k}', solid(P.extrude(b_, z, pc.get('hauteur_m', 2.4), None)), mats['placard'])
             print(f'  placards : {len(fronts)} facade(s), {body.area:.2f} m2')
         rl, sp = [], []
         rg = eq.get('rails_regles', {})
         obst = [Point(*S.pt(*p_['position_plan_pt'], dx, dy)).buffer(p_['diametre_m'] / 2) for p_ in murs['poteaux'] if by_name[p_['niveau']] == i]
         libre = (outline.union(tremie) if i == hi else outline).difference(W.buffer(rg.get('distance_min_murs_m', 0.30)))   # le plafond couvre la tremie
         for o_ in obst: libre = libre.difference(o_.buffer(rg.get('distance_min_obstacles_m', 0.15)))
-        for r in [r for r in eq.get('rails', []) if by_name[r['niveau']] == i]:
+        for j, r in enumerate([r for r in eq.get('rails', []) if by_name[r['niveau']] == i]):
+            rl, sp = [], []
             p0, p1 = S.pt(*r['de_plan_pt'], dx, dy), S.pt(*r['a_plan_pt'], dx, dy)
             for q0, q1 in EQ.clip_rail(p0, p1, libre, rg.get('longueur_min_m', 0.6)):
                 mid = Point((q0[0] + q1[0]) / 2, (q0[1] + q1[1]) / 2)
@@ -311,10 +360,11 @@ def main(src, dst, cfg='reglages.json'):
                 ls_ = LineString([q0, q1])
                 print(f"  {r.get('nom', 'rail')} {ls_.length:.2f} m : {ls_.distance(W):.2f} m du mur le plus proche"
                       + (f", {min(ls_.distance(o_) for o_ in obst):.2f} m d'un poteau" if obst else '') + f", jeu sous plafond {jeu * 100:.1f} cm")
-        for s_ in [s_ for s_ in eq.get('suspensions', []) if by_name[s_['niveau']] == i]:
+            add(f'{n}_rail_{j}__rail', solid(rl), mats['rail']); add(f'{n}_rail_{j}__spots', solid(sp), mats['lum'])
+        for j, s_ in enumerate([s_ for s_ in eq.get('suspensions', []) if by_name[s_['niveau']] == i]):
             x_, y_ = S.pt(*s_['position_plan_pt'], dx, dy)
-            a_, b_ = EQ.suspension(x_, y_, z + H, z + s_['hauteur_bas_m'], s_['diametre_m']); sp += a_; rl += b_
-        add(f'{n}_rails', solid(rl), mats['rail']); add(f'{n}_luminaires', solid(sp), mats['lum'])
+            a_, b_ = EQ.suspension(x_, y_, z + H, z + s_['hauteur_bas_m'], s_['diametre_m'])
+            add(f'{n}_suspension_{j}__lampe', solid(a_), mats['lum']); add(f'{n}_suspension_{j}__cable', solid(b_), mats['rail'])
         b = W.bounds; print(f"{niveaux[i]['nom']}: {b[2]-b[0]:.2f} x {b[3]-b[1]:.2f} m, plafond {H:.2f} m")
 
     gen = CB.build if hel.get('moteur') == 'extension_blender' else SP.build
@@ -325,16 +375,16 @@ def main(src, dst, cfg='reglages.json'):
         wood, steel, panel, nsp = SP.build(spiral_xy, Rsp, Z[lo], Z[hi], hel)
     print('colimacon :', nsp, 'hauteurs de marche')
     post_meshes = {}
-    for p in murs['poteaux']:
+    for j, p in enumerate(murs['poteaux']):
         k = by_name[p['niveau']]; x, y = S.pt(*p['position_plan_pt'], *shift[k])
         hp_ = next((vb.h(x, y) for vb in vaults.get(k, []) if vb.room.contains(Point(x, y))), CEIL[k])   # jusqu'a la voute
         c = trimesh.creation.cylinder(radius=p['diametre_m'] / 2, height=hp_, sections=32)
         c.apply_translation([x, y, Z[k] + hp_ / 2])
-        post_meshes.setdefault((k, p.get('materiau', 'acier')), []).append(c)
+        post_meshes[(k, j)] = (p.get('materiau', 'acier'), [c])
     add(f'niveau{lo}_colimacon_bois', solid(wood), mats['bois'])
     add(f'niveau{lo}_colimacon_acier', solid(steel), mats['acier'])
     add(f'niveau{hi}_garde_corps', solid(panel), mats['tole'])
-    for (k, m), ms in post_meshes.items(): add(f'niveau{k}_poteaux_{m}', solid(ms), mats.get(m, mats['acier']))
+    for (k, j), (m, ms) in post_meshes.items(): add(f'niveau{k}_poteau_{j}', solid(ms), mats.get(m, mats['acier']))
 
     dr = esc.get('escalier_droit')
     if dr:
@@ -343,6 +393,11 @@ def main(src, dst, cfg='reglages.json'):
         print('escalier droit :', n, 'marches')
         add(f'niveau{lo2}_escalier', solid(ms), mats['escalier'])
 
+    for gname, g_ in scene.geometry.items():
+        el = gname.split('__')[0]
+        if re.match(r'niveau\d+_porte_\d+$', el): continue
+        t_ = deplacement(el)
+        if any(t_): g_.apply_translation(t_); print(f'  {el} deplace de ({t_[0]:.2f}, {t_[1]:.2f}, {t_[2]:.2f}) m')
     scene.apply_transform(trimesh.transformations.rotation_matrix(-np.pi / 2, [1, 0, 0]))
     c = scene.bounds.mean(axis=0); scene.apply_translation([-c[0], 0, -c[2]])
     scene.export(dst); print('ok', dst, scene.extents)

@@ -112,6 +112,17 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
 .drawbar .snapt { display: inline-flex; gap: 5px; align-items: center; font-size: 12px; color: var(--muted); margin-left: auto; }
 .drawbar .snapt input { accent-color: var(--accent); }
 .drawbar[hidden], .drawbar [hidden], .tag[hidden] { display: none; }
+/* déplacer un élément */
+.movebox { position: absolute; right: 10px; top: 10px; width: 270px; max-width: calc(100% - 20px); background: var(--raise); border: 1px solid var(--line); border-radius: 8px;
+  padding: 10px 12px; display: grid; gap: 8px; font-size: 13px; box-shadow: 0 4px 16px rgba(0,0,0,.12); z-index: 3; }
+.movebox[hidden] { display: none; }
+.movebox h4 { margin: 0; font-size: 13px; font-weight: 600; }
+.movebox .xyz { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.movebox .xyz label { display: grid; gap: 2px; font-size: 11px; color: var(--muted); font-family: var(--mono); }
+.movebox .xyz input { width: 100%; font: 13px var(--mono); padding: 4px 6px; border: 1px solid var(--line); border-radius: 5px; background: var(--panel); color: var(--fg); }
+.movebox .note { margin: 0; font-size: 12px; color: var(--muted); }
+.movebox .row { display: flex; gap: 6px; flex-wrap: wrap; }
+.movebox .btn { padding: 4px 10px; }
 .tag { position: absolute; transform: translate(-50%, -50%); pointer-events: none; font-size: 12px; font-weight: 600; color: var(--fg); text-align: center; line-height: 1.2;
   background: color-mix(in srgb, var(--raise) 80%, transparent); padding: 2px 6px; border-radius: 4px; white-space: nowrap; }
 .tag.small { font-size: 11px; } .tag.small small { display: none; }
@@ -168,12 +179,14 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
       <div class="hint" id="hint">Glisser pour tourner · molette ou pincer pour zoomer</div>
       <div id="tags"></div>
       <div class="drawbar" id="drawbar" hidden><span id="drawmsg"></span><label class="snapt"><input type="checkbox" id="snap" checked> Accroche aux murs</label><button class="btn" id="draw-ok">Terminer</button><button class="btn ghost" id="draw-cancel">Annuler</button></div>
+      <div class="movebox" id="movebox" hidden></div>
     </div>
     <div class="tools">
       <div><span class="lab">Niveau</span><span class="seg" role="group" aria-label="Niveau affiché">
         <button id="lvl-0" aria-pressed="true">Rez-de-chaussée</button><button id="lvl-1" aria-pressed="false">Sous-sol</button><button id="lvl-all" aria-pressed="false">Les deux</button></span></div>
       <div><span class="lab">Vue</span><span class="seg" role="group" aria-label="Point de vue">
         <button id="view-3d" aria-pressed="true">Perspective</button><button id="view-top" aria-pressed="false">Dessus</button><button id="view-eye" aria-pressed="false">Hauteur d'yeux</button></span></div>
+      <div><span class="lab">Outil</span><span class="seg" role="group" aria-label="Outil"><button id="tool-move" aria-pressed="false">Déplacer un élément</button></span></div>
     </div>
   </div>
 
@@ -189,6 +202,7 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
 <script src="https://cdn.jsdelivr.net/npm/three@0.147.0/build/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/loaders/GLTFLoader.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/controls/TransformControls.js"></script>
 <script>
 (function () {
   const ORIG = JSON.parse(document.getElementById('reglages').textContent);
@@ -491,6 +505,7 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
   // dessin d'une pièce ou d'une séparation, en vue de dessus
   const drawbar = document.getElementById('drawbar'), drawmsg = document.getElementById('drawmsg');
   function startDraw(kind) {
+    if (moveMode) document.getElementById('tool-move').click();
     endDraw(false);
     if (level === 'all') { level = '0'; press('lvl-', 'lvl-0'); }
     view = 'top'; press('view-', 'view-top'); applyLevel(); applyView();
@@ -578,6 +593,7 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
   });
   renderer.domElement.addEventListener('pointerup', e => {
     if (!downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 5) return; downAt = null;
+    if (moveMode && !drawing) { if (!tc.dragging && !tc.axis) pickElement(e); return; }
     if (drawing) {
       const s_ = pick(e); if (!s_) return; const p = s_.p;
       if (drawing.kind !== 'separation' && drawing.kind !== 'marche' && drawing.kind !== 'linteau' && drawing.pts.length >= 3 && p.distanceTo(drawing.pts[0]) < Math.max(0.05, 14 * pxWorld())) return endDraw(true);
@@ -592,6 +608,79 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
     render();
     const row = document.querySelector('.room.sel'); if (row) row.scrollIntoView({ block: 'nearest' });
   });
+
+  // ---------- Déplacer un élément : portes, placards, rails, suspensions, poteaux, escalier droit ----------
+  // Réglage : etape_3_ouvertures_escaliers.deplacements[élément] = { x_m (est), y_m (nord), z_m (haut) }, en mètres depuis la position du plan.
+  // Le moteur déplace aussi l'ouverture d'une porte : l'ancienne est rebouchée, le mur est percé au nouvel endroit.
+  const DEPP = ES.concat('deplacements');
+  if (!get(ORIG, DEPP)) set(ORIG, DEPP, {}); if (!get(R, DEPP)) set(R, DEPP, {});
+  const MOVABLE = /^niveau(\d+)_(porte|placard|rail|suspension|poteau|escalier)(?:_(\d+))?(?:__|$)/;
+  const NOMS = { porte: 'Porte', placard: 'Placard', rail: 'Rail d’éclairage', suspension: 'Suspension', poteau: 'Poteau', escalier: 'Escalier droit' };
+  const elOf = name => MOVABLE.test(name || '') ? name.split('__')[0] : null;
+  function elLabel(el) {
+    const m = MOVABLE.exec(el); if (!m) return el;
+    const nv = (PCS.niveaux && PCS.niveaux[+m[1]]) ? PCS.niveaux[+m[1]].nom : 'niveau ' + m[1];
+    return `${NOMS[m[2]]}${m[3] != null ? ' ' + (+m[3] + 1) : ''} (${nv})`;
+  }
+  const depOf = (root, el) => { const d = (get(root, DEPP) || {})[el] || {}; return [+d.x_m || 0, +d.y_m || 0, +d.z_m || 0]; };
+  let moveMode = false, selEl = null; const baseW = {}, hilite = [];
+  const meshesOf = el => { const out = []; if (model) model.traverse(o => { if (o.isMesh && elOf(o.name) === el) out.push(o); }); return out; };
+  function applyDep(el) {   // aperçu : le GLB contient déjà le réglage d'origine, on ajoute l'écart
+    if (!baseW[el]) baseW[el] = meshesOf(el).map(o => ({ o, w: o.getWorldPosition(new THREE.Vector3()) }));
+    const a = depOf(R, el), b = depOf(ORIG, el), d = new THREE.Vector3(a[0] - b[0], a[2] - b[2], -(a[1] - b[1]));
+    baseW[el].forEach(({ o, w }) => { o.parent.updateMatrixWorld(true); o.position.copy(o.parent.worldToLocal(w.clone().add(d))); });
+    draw();
+  }
+  const tc = new THREE.TransformControls(camera, renderer.domElement); tc.setSize(0.85); scene.add(tc);
+  const proxy = new THREE.Object3D(); scene.add(proxy); let proxy0 = null, dep0 = null;
+  tc.addEventListener('dragging-changed', e => { controls.enabled = !e.value; if (!e.value) placeProxy(); });
+  tc.addEventListener('change', draw);
+  tc.addEventListener('objectChange', () => { const d = proxy.position.clone().sub(proxy0); setDep(selEl, [dep0[0] + d.x, dep0[1] - d.z, dep0[2] + d.y], false); });
+  function setDep(el, v, replace = true) {
+    const all = get(R, DEPP), o = get(ORIG, DEPP)[el]; v = v.map(x => Math.round(x * 1000) / 1000);
+    const ov = depOf(ORIG, el);
+    if (v.every((x, i) => Math.abs(x - ov[i]) < 5e-4)) { if (o) all[el] = JSON.parse(JSON.stringify(o)); else delete all[el]; }
+    else all[el] = { nom: elLabel(el), x_m: v[0], y_m: v[1], z_m: v[2] };
+    applyDep(el); updCount(); updMoveBox(); if (replace) placeProxy();
+  }
+  function placeProxy() { if (!selEl) return; const b = new THREE.Box3(); meshesOf(selEl).forEach(o => b.expandByObject(o)); b.getCenter(proxy.position); proxy0 = proxy.position.clone(); dep0 = depOf(R, selEl); draw(); }
+  function selectEl(el) {
+    hilite.splice(0).forEach(([o, m]) => { o.material = m; });
+    selEl = el;
+    if (el) { meshesOf(el).forEach(o => { hilite.push([o, o.material]); o.material = o.material.clone(); o.material.emissive = new THREE.Color(0x2f6b55); o.material.emissiveIntensity = 0.55; });
+      placeProxy(); tc.attach(proxy); }
+    else tc.detach();
+    updMoveBox(); draw();
+  }
+  const movebox = document.getElementById('movebox');
+  function updMoveBox() {
+    movebox.hidden = !moveMode; if (!moveMode) return;
+    if (!selEl) { movebox.innerHTML = '<h4>Déplacer un élément</h4><p class="note">Cliquez une porte, un placard, un rail, une suspension, un poteau ou l’escalier droit. Faites glisser les flèches, ou tapez les valeurs.</p>'; return; }
+    const v = depOf(R, selEl), door = /_porte_/.test(selEl);
+    if (movebox.dataset.el !== selEl || !movebox.querySelector('input')) {
+      movebox.dataset.el = selEl;
+      movebox.innerHTML = `<h4></h4><div class="xyz">${['X (est)', 'Y (nord)', 'Z (haut)'].map((l, i) => `<label>${l}<input type="number" step="0.05" data-i="${i}"></label>`).join('')}</div>
+        <p class="note">${door ? 'En mètres depuis la position du plan. À la génération, l’ancienne ouverture est rebouchée et le mur est percé au nouvel endroit : aucun trou.' : 'En mètres depuis la position du plan.'}</p>
+        <div class="row"><button class="btn ghost" data-act="zero">Remettre comme sur le plan</button><button class="btn ghost" data-act="close">Fermer</button></div>`;
+      movebox.querySelector('h4').textContent = elLabel(selEl);
+      movebox.querySelectorAll('input').forEach(inp => inp.addEventListener('change', () => {
+        const w = depOf(R, selEl); w[+inp.dataset.i] = parseFloat(String(inp.value).replace(',', '.')) || 0; setDep(selEl, w); }));
+      movebox.querySelector('[data-act="zero"]').addEventListener('click', () => setDep(selEl, [0, 0, 0]));
+      movebox.querySelector('[data-act="close"]').addEventListener('click', () => selectEl(null));
+    }
+    movebox.querySelectorAll('input').forEach(inp => { if (document.activeElement !== inp) inp.value = v[+inp.dataset.i]; });
+  }
+  document.getElementById('tool-move').addEventListener('click', () => {
+    moveMode = !moveMode; press('tool-', moveMode ? 'tool-move' : '');
+    if (moveMode && drawing) endDraw(false);
+    if (!moveMode) selectEl(null); updMoveBox();
+  });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && selEl) selectEl(null); });
+  function pickElement(e) {
+    if (!model) return;
+    const hit = aim(e).intersectObject(model, true).find(h => { let o = h.object; while (o) { if (!o.visible) return false; o = o.parent; } return elOf(h.object.name); });
+    selectEl(hit ? elOf(hit.object.name) : null);
+  }
 
   // ---------- Carrelage : texture recalculée dans le navigateur ----------
   const entryIn = (root, r) => !r || typeof r === 'string' ? null : (root === ORIG ? (r.src && r.src.liste_index != null ? get(ORIG, PP).liste[r.src.liste_index] : null) : r.entry);
@@ -666,6 +755,7 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
     out.push([path, a, b]);
   }
   function describe(p) {
+    if (p[1] === 'deplacements' && p.length > 2) return 'Déplacement › ' + elLabel(p[2]) + (p.length > 3 ? ' › ' + ({ x_m: 'X', y_m: 'Y', z_m: 'Z' }[p[3]] || p[3]) : '');
     if (p[1] === 'pieces' && (p[2] === 'liste' || p[2] === 'separations') && p.length > 3) {
       const e = get(R, p.slice(0, 4)) || get(ORIG, p.slice(0, 4)), what = p[2] === 'liste' ? 'Pièce' : 'Coupure';
       const rest = p.slice(4).map(k => SOL_LAB[k] || k).join(' › ');
@@ -691,19 +781,19 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
   const when = iso => new Date(iso).toLocaleString('fr-FR', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
   const APP = window.atelier || null;   // logiciel de bureau : le moteur tourne sur l'ordinateur
   if (APP) {
-    validerBtn.textContent = 'Générer la maquette'; validerBtn.disabled = false; saveMsg.className = 'mock';
+    validerBtn.textContent = 'Valider les modifications'; validerBtn.disabled = false; saveMsg.className = 'mock';
     saveMsg.textContent = APP.etat ? APP.etat() : '';
     validerBtn.addEventListener('click', async () => {
       validerBtn.disabled = true; validerBtn.textContent = 'Génération…'; saveMsg.className = 'mock';
-      saveMsg.textContent = 'Le moteur reconstruit la maquette (quelques secondes)…';
+      saveMsg.textContent = 'Modifications enregistrées, le moteur reconstruit la maquette (quelques secondes)…';
       const res = await APP.generer(R);
       if (!res || !res.ok) { saveMsg.textContent = 'La génération a échoué : ' + ((res && res.erreur) || 'erreur inconnue');
-        validerBtn.textContent = 'Générer la maquette'; updCount(); }
+        validerBtn.textContent = 'Valider les modifications'; updCount(); }
       // si tout va bien, la fenêtre se recharge avec la nouvelle maquette
     });
   }
   if (APP) { APP.fournir(() => JSON.parse(JSON.stringify(R)));
-    APP.surMessage(t => { saveMsg.className = 'mock'; saveMsg.textContent = t; validerBtn.textContent = 'Générer la maquette'; validerBtn.disabled = false; }); }
+    APP.surMessage(t => { saveMsg.className = 'mock'; saveMsg.textContent = t; validerBtn.textContent = 'Valider les modifications'; validerBtn.disabled = false; }); }
   if (!APP && window.claude && claude.use) claude.use('db').then(async d => {
     db = d;
     if (!db) { saveMsg.textContent = 'Validation indisponible ici : utilisez Export › Copier reglages.json'; return; }
@@ -1027,7 +1117,7 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
         () => { ta.focus(); ta.select(); b.textContent = 'Sélectionné, copiez avec Ctrl+C'; }); });
       const p = document.createElement('p'); p.className = 'note'; p.textContent = 'Le plus simple : le bouton « Valider les modifications » en haut. Sinon, collez ce texte dans la conversation.';
       if (window.atelier) {
-        p.textContent = 'Le bouton « Générer la maquette » en haut applique ces réglages. Le GLB enregistré est celui de la dernière génération.';
+        p.textContent = 'Le bouton « Valider les modifications » en haut enregistre ces réglages et régénère la maquette. Le GLB enregistré est celui de la dernière génération.';
         const g = document.createElement('button'); g.className = 'btn'; g.textContent = 'Enregistrer le GLB…';
         g.addEventListener('click', async () => { const r_ = await window.atelier.exporterGLB(); if (r_ && r_.chemin) { p.textContent = 'GLB enregistré : ' + r_.chemin; } });
         d.appendChild(g);

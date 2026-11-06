@@ -92,7 +92,7 @@ function generer() {
     p.on('error', e => resolve({ ok: false, erreur: `Python introuvable (${c.python}) : ${e.message}` }));
     p.on('close', code => {
       fs.writeFileSync(sortie('journal.txt'), journal);
-      if (code === 0) return resolve({ ok: true });
+      if (code === 0) { fs.writeFileSync(sortie('version.txt'), app.getVersion()); return resolve({ ok: true }); }
       const lignes = journal.trim().split('\n');
       resolve({ ok: false, erreur: lignes[lignes.length - 1] || `code ${code}` });
     });
@@ -109,6 +109,7 @@ function assemblerEditeur() {
     .replace('https://cdn.jsdelivr.net/npm/three@0.147.0/build/three.min.js', url('three.min.js'))
     .replace('https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/loaders/GLTFLoader.js', url('GLTFLoader.js'))
     .replace('https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/controls/OrbitControls.js', url('OrbitControls.js'))
+    .replace('https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/controls/TransformControls.js', url('TransformControls.js'))
     .replace('__TITRE__', projet.nom.replace(/</g, '&lt;'))
     .replace('__PLAN__', projet.plan.replace(/</g, '&lt;'))
     .replace('__TAILLE__', (glb.length / 1e6).toFixed(1).replace('.', ',') + ' Mo')
@@ -125,7 +126,8 @@ async function ouvrirProjet(dossier) {
   ajouterRecent(dossier);
   modifications = 0;
   win.setTitle(`${projet.nom} · Atelier 3D`);
-  if (!fs.existsSync(sortie('maquette.glb'))) {
+  let vMaquette = ''; try { vMaquette = fs.readFileSync(sortie('version.txt'), 'utf-8').trim(); } catch {}
+  if (!fs.existsSync(sortie('maquette.glb')) || vMaquette !== app.getVersion()) {   // maquette absente ou faite par une version précédente du moteur
     win.loadFile(path.join(RACINE, 'accueil.html'), { hash: 'generation' });
     const r = await generer();
     if (!r.ok) { win.webContents.send('erreur', 'La génération a échoué : ' + r.erreur); return; }
@@ -226,7 +228,7 @@ function construireMenu() {
       { label: 'Accueil', click: () => { projet = null; win.setTitle('Atelier 3D'); win.loadFile(path.join(RACINE, 'accueil.html')); construireMenu(); } },
       { type: 'separator' },
       { label: 'Enregistrer les réglages', accelerator: 'CmdOrCtrl+S', enabled: p, click: async () => { enregistrerReglages(await demanderReglages()); modifications = 0; } },
-      { label: 'Générer la maquette', accelerator: 'CmdOrCtrl+G', enabled: p, click: genererDepuisMenu },
+      { label: 'Valider les modifications et régénérer', accelerator: 'CmdOrCtrl+G', enabled: p, click: genererDepuisMenu },
       { label: 'Enregistrer le GLB…', accelerator: 'CmdOrCtrl+E', enabled: p, click: exporterGLB },
       { type: 'separator' },
       { label: 'Afficher le dossier du projet', enabled: p, click: () => shell.openPath(projet.dossier) },
@@ -249,7 +251,7 @@ app.whenReady().then(() => {
     if (!modifications) return;
     const r = dialog.showMessageBoxSync(win, { type: 'question', buttons: ['Quitter sans enregistrer', 'Annuler'], defaultId: 1, cancelId: 1,
       message: `${modifications} réglage${modifications > 1 ? 's' : ''} modifié${modifications > 1 ? 's' : ''} pas encore enregistré${modifications > 1 ? 's' : ''}.`,
-      detail: 'Utilisez Fichier › Enregistrer les réglages, ou Générer la maquette.' });
+      detail: 'Cliquez « Valider les modifications » en haut de l’éditeur, ou Fichier › Enregistrer les réglages.' });
     if (r === 1) e.preventDefault();
   });
   construireMenu();

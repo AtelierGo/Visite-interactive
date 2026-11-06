@@ -356,7 +356,8 @@
         "hauteur_dessous_m": 2.4,
         "rayon_recherche_m": 0.35
       }
-    ]
+    ],
+    "epaisseur_max_ouverture_m": 0.8
   },
   "etape_3_ouvertures_escaliers": {
     "escalier_helicoidal": {
@@ -479,7 +480,8 @@
           ]
         ]
       }
-    ]
+    ],
+    "deplacements": {}
   },
   "etape_4_materiaux": {
     "murs": {
