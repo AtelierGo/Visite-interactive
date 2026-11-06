@@ -6,6 +6,11 @@ const fs = require('fs');
 const { spawn, spawnSync } = require('child_process');
 
 const RACINE = __dirname;
+// Lancée depuis le Finder, une app Mac ne voit pas le PATH du Terminal : on ajoute les emplacements usuels (Homebrew, python.org).
+if (process.platform === 'darwin') {
+  const extra = ['/opt/homebrew/bin', '/usr/local/bin', '/Library/Frameworks/Python.framework/Versions/Current/bin'];
+  process.env.PATH = extra.concat((process.env.PATH || '').split(':')).filter((d, i, a) => d && a.indexOf(d) === i).join(':');
+}
 const MOTEUR = path.join(RACINE.replace('app.asar', 'app.asar.unpacked'), 'moteur', 'build_v4.py');   // Python ne lit pas dans l'archive asar
 const EXEMPLE = path.join(RACINE, 'exemples', 'rue-des-balances');
 const THREE_DIR = path.join(RACINE, 'node_modules', 'three');
