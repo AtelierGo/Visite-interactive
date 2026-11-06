@@ -43,7 +43,7 @@ function verifierPython() {
   const r = spawnSync(c.python, ['-c', 'import pymupdf, shapely, trimesh, PIL, numpy; print("ok")'], { encoding: 'utf-8' });
   if (r.error) return { ok: false, message: `Python introuvable (${c.python}).` };
   if (r.status !== 0) return { ok: false, message: 'Python est là mais il manque des modules. Installez-les avec : '
-    + `${c.python} -m pip install -r "${path.join(RACINE, 'moteur', 'requirements.txt')}"` };
+    + `${c.python} -m pip install --user -r "${path.join(path.dirname(MOTEUR), 'requirements.txt')}"` };
   return { ok: true, message: `Python prêt (${c.python}).` };
 }
 function ajouterRecent(dossier) {
