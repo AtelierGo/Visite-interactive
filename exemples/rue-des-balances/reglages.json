@@ -1,0 +1,718 @@
+{
+  "version": "0.7",
+  "projet": {
+    "nom": "Rue des Balances",
+    "fichier_plan": "A2018_032_Rue_Des_Balances-3D.ai"
+  },
+  "etape_1_import": {
+    "echelle": 50,
+    "calques": {
+      "murs": "Murs",
+      "portes": "Porte",
+      "escalier_helicoidal": "Spiral",
+      "mobilier": "Mobilier",
+      "portes_coulissantes": "Porte coulissante",
+      "placards": "Placards"
+    },
+    "niveaux": [
+      {
+        "page": 1,
+        "nom": "Rez-de-chaussée",
+        "hauteur_sous_plafond_m": 2.95
+      },
+      {
+        "page": 2,
+        "nom": "Sous-sol",
+        "hauteur_sous_plafond_m": 3.15,
+        "linteaux_ouverture_max_m": 1.6
+      }
+    ],
+    "alignement_niveaux": {
+      "methode": "axe_escalier_helicoidal",
+      "decalage_manuel_m": null
+    },
+    "pieces": {
+      "detection_auto": true,
+      "ouverture_max_m": 1.8,
+      "surface_max_passage_m2": 1.2,
+      "surface_min_m2": 1.2,
+      "couper_aux_changements_de_niveau": true,
+      "separations": [
+        {
+          "niveau": "Rez-de-chaussée",
+          "nom": "haut du couloir",
+          "ligne_plan_pt": [
+            [
+              444,
+              398
+            ],
+            [
+              492,
+              398
+            ]
+          ]
+        }
+      ],
+      "liste": [
+        {
+          "niveau": "Rez-de-chaussée",
+          "nom": "Salle expo 1",
+          "type": "entree",
+          "point_plan_pt": [
+            415,
+            900
+          ],
+          "sol": {}
+        },
+        {
+          "niveau": "Rez-de-chaussée",
+          "nom": "Salle expo 2",
+          "type": "piece",
+          "point_plan_pt": [
+            397.2,
+            270.8
+          ],
+          "sol": {}
+        },
+        {
+          "niveau": "Rez-de-chaussée",
+          "nom": "Pièce 3",
+          "type": "piece",
+          "point_plan_pt": [
+            377.5,
+            421.7
+          ],
+          "sol": {},
+          "supprimee": true
+        },
+        {
+          "niveau": "Rez-de-chaussée",
+          "nom": "Couloir",
+          "type": "couloir",
+          "point_plan_pt": [
+            456.4,
+            478.6
+          ],
+          "sol": {}
+        },
+        {
+          "niveau": "Rez-de-chaussée",
+          "nom": "Toilettes",
+          "type": "toilettes",
+          "point_plan_pt": [
+            503.1,
+            480.4
+          ],
+          "sol": {}
+        },
+        {
+          "niveau": "Sous-sol",
+          "nom": "Salle expo 3",
+          "type": "cave",
+          "point_plan_pt": [
+            430.1,
+            878.3
+          ],
+          "sol": {}
+        },
+        {
+          "niveau": "Sous-sol",
+          "nom": "Cave du fond",
+          "type": "cave",
+          "point_plan_pt": [
+            468.9,
+            256.1
+          ],
+          "sol": {},
+          "supprimee": true
+        },
+        {
+          "niveau": "Sous-sol",
+          "nom": "Pièce 3",
+          "type": "piece",
+          "point_plan_pt": [
+            397.8,
+            482.4
+          ],
+          "sol": {},
+          "supprimee": true
+        },
+        {
+          "niveau": "Sous-sol",
+          "nom": "Passage",
+          "type": "couloir",
+          "point_plan_pt": [
+            535.9,
+            544.5
+          ],
+          "sol": {},
+          "supprimee": true
+        }
+      ]
+    },
+    "zones_exclues": [
+      {
+        "niveau": "Rez-de-chaussée",
+        "nom": "cour extérieure (à vérifier)",
+        "polygone_plan_pt": [
+          [
+            254.9,
+            352.3
+          ],
+          [
+            343.7,
+            380.8
+          ],
+          [
+            300.0,
+            490.3
+          ],
+          [
+            304.4,
+            487.6
+          ],
+          [
+            354.1,
+            495.5
+          ],
+          [
+            352.8,
+            504.4
+          ],
+          [
+            409.2,
+            514.1
+          ],
+          [
+            410.7,
+            505.2
+          ],
+          [
+            419.5,
+            506.1
+          ],
+          [
+            431.7,
+            380.1
+          ],
+          [
+            321.4,
+            358.8
+          ],
+          [
+            320.9,
+            359.9
+          ]
+        ]
+      }
+    ]
+  },
+  "etape_2_murs": {
+    "epaisseur_dalle_m": 0.2,
+    "hauteur_linteau_m": 2.1,
+    "linteaux_ouverture_max_m": 1.1,
+    "linteaux_marge_portes_m": 0.15,
+    "emprise_fermeture_m": 2,
+    "changements_de_niveau": [
+      {
+        "niveau": "Rez-de-chaussée",
+        "nom": "marches du passage vers la pièce du fond",
+        "ligne_plan_pt": [
+          [
+            422.2,
+            550.8
+          ],
+          [
+            480.7,
+            555.6
+          ]
+        ],
+        "cote_qui_monte": "nord",
+        "mode": "marches",
+        "marches": 2,
+        "hauteur_marche_m": 0.16,
+        "cote_m": null,
+        "giron_plan_pt": [
+          [
+            422.2,
+            550.8
+          ],
+          [
+            420.7,
+            566.6
+          ],
+          [
+            479.3,
+            571.4
+          ],
+          [
+            480.7,
+            555.6
+          ]
+        ],
+        "giron_m": 0.28
+      },
+      {
+        "niveau": "Rez-de-chaussée",
+        "nom": "marches du couloir vers la salle d'expo 2",
+        "ligne_plan_pt": [
+          [
+            457.9,
+            373.2
+          ],
+          [
+            497.0,
+            381.1
+          ]
+        ],
+        "cote_qui_monte": "nord",
+        "mode": "marches",
+        "marches": 2,
+        "hauteur_marche_m": 0.16,
+        "cote_m": null,
+        "giron_plan_pt": [
+          [
+            457.9,
+            373.2
+          ],
+          [
+            455.1,
+            386.8
+          ],
+          [
+            493.7,
+            394.7
+          ],
+          [
+            497.0,
+            381.1
+          ]
+        ],
+        "giron_m": 0.25
+      }
+    ],
+    "nettoyage_bandes_etroites_m": 0.2,
+    "poteaux": [
+      {
+        "niveau": "Sous-sol",
+        "position_plan_pt": [
+          381.3,
+          686.2
+        ],
+        "diametre_m": 0.2,
+        "materiau": "acier"
+      },
+      {
+        "niveau": "Sous-sol",
+        "position_plan_pt": [
+          380.3,
+          809
+        ],
+        "diametre_m": 0.2,
+        "materiau": "acier"
+      }
+    ],
+    "plafonds": [
+      {
+        "niveau": "Sous-sol",
+        "nom": "voûte de la grande salle",
+        "piece_plan_pt": [
+          447.6,
+          757.2
+        ],
+        "forme": "voute_berceau",
+        "hauteur_naissance_m": 2.1,
+        "hauteur_cle_m": 3.15,
+        "axe_deg": null,
+        "detection_pieces_fermeture_m": 1.5
+      }
+    ],
+    "linteaux_ajustes": [
+      {
+        "niveau": "Rez-de-chaussée",
+        "nom": "porte coulissante du passage",
+        "porte_plan_pt": [
+          483.5,
+          480
+        ],
+        "methode": "joindre_les_murs",
+        "rayon_recherche_m": 0.4
+      }
+    ],
+    "linteaux_traces": [
+      {
+        "niveau": "Rez-de-chaussée",
+        "nom": "entrée du couloir",
+        "ligne_plan_pt": [
+          [
+            422.2,
+            550.8
+          ],
+          [
+            480.7,
+            555.6
+          ]
+        ],
+        "hauteur_dessous_m": 2.4,
+        "rayon_recherche_m": 0.35
+      }
+    ]
+  },
+  "etape_3_ouvertures_escaliers": {
+    "escalier_helicoidal": {
+      "moteur": "extension_blender",
+      "extension_blender": {
+        "fichier": "addon/escalier_colimasson.py",
+        "python_blender": "../bvenv/bin/python"
+      },
+      "niveau_bas": "Sous-sol",
+      "niveau_haut": "Rez-de-chaussée",
+      "angle_depart_deg": -12,
+      "angle_arrivee_deg": 270,
+      "rotation_deg": 72,
+      "hauteur_marche_max_m": 0.19,
+      "rayon_facteur": 0.96,
+      "epaisseur_marche_m": 0.04,
+      "rayon_fut_m": 0.075,
+      "limon_hauteur_m": 0.32,
+      "main_courante_hauteur_m": 0.92,
+      "lisses_hauteurs_m": [
+        0.36,
+        0.55,
+        0.74
+      ],
+      "montants_tous_les_n_pas": 3,
+      "tremie_marge_m": 0.08,
+      "garde_corps": {
+        "actif": true,
+        "hauteur_m": 1,
+        "lisses_hauteurs_m": [
+          0.62,
+          0.74,
+          0.86
+        ],
+        "panneau_perfore_m": [
+          0.08,
+          0.53
+        ],
+        "ouverture_apres_arrivee_deg": 0,
+        "bandeau_sous_tremie_m": 0.2,
+        "nombre_montants": 9
+      },
+      "palier": {
+        "angle_deg": 85
+      }
+    },
+    "escalier_droit": {
+      "niveau_bas": "Sous-sol",
+      "niveau_haut": "Rez-de-chaussée",
+      "volee_basse_x_plan_pt": [
+        425,
+        440
+      ],
+      "volee_haute_x_plan_pt": [
+        370,
+        430
+      ],
+      "palier_plan_pt": [
+        [
+          433,
+          434
+        ],
+        [
+          440,
+          367
+        ],
+        [
+          500,
+          381
+        ],
+        [
+          497,
+          453
+        ],
+        [
+          432,
+          444
+        ]
+      ]
+    },
+    "portes": {
+      "hauteur_vantail_m": 2.04,
+      "epaisseur_vantail_m": 0.04,
+      "longueur_min_trait_pt": 25,
+      "vantaux_vitres_plan_pt": [
+        {
+          "niveau": "Rez-de-chaussée",
+          "point": [
+            442,
+            980
+          ]
+        }
+      ]
+    },
+    "vitrines": [
+      {
+        "niveau": "Rez-de-chaussée",
+        "nom": "vitrine cintrée sur rue",
+        "de_plan_pt": [
+          333,
+          1012.5
+        ],
+        "a_plan_pt": [
+          498,
+          1012.5
+        ],
+        "hauteur_naissance_m": 2.15,
+        "hauteur_cle_m": 2.9,
+        "hauteur_imposte_m": 2.15,
+        "epaisseur_mur_m": 0.3,
+        "chassis_m": 0.06,
+        "montants_u_m": [
+          0.952,
+          1.958
+        ],
+        "baies_porte_u_m": [
+          [
+            0.952,
+            1.958
+          ]
+        ]
+      }
+    ]
+  },
+  "etape_4_materiaux": {
+    "murs": {
+      "couleur": [
+        244,
+        243,
+        240
+      ],
+      "rugosite": 0.9
+    },
+    "sol": {
+      "type": "carrelage",
+      "taille_carreau_m": 1.2,
+      "couleur": [
+        74,
+        74,
+        72
+      ],
+      "couleur_joint": [
+        112,
+        112,
+        108
+      ],
+      "largeur_joint_mm": 9,
+      "decalage_x_m": 0,
+      "decalage_y_m": 0,
+      "rotation_deg": 0,
+      "rugosite": 0.55
+    },
+    "marches": {
+      "taille_carreau_m": 1.2,
+      "largeur_joint_mm": 9,
+      "decalage_x_m": 0,
+      "decalage_y_m": 0,
+      "rotation_deg": 0,
+      "couleur": [
+        74,
+        74,
+        72
+      ],
+      "couleur_joint": [
+        112,
+        112,
+        108
+      ],
+      "rugosite": 0.55
+    },
+    "plinthes": {
+      "hauteur_m": 0.08,
+      "epaisseur_m": 0.012,
+      "couleur": [
+        70,
+        70,
+        68
+      ],
+      "rugosite": 0.5
+    },
+    "plafond": {
+      "couleur": [
+        240,
+        240,
+        238
+      ],
+      "rugosite": 0.95
+    },
+    "escalier_droit": {
+      "couleur": [
+        238,
+        238,
+        236
+      ],
+      "rugosite": 0.6
+    },
+    "bois": {
+      "nom": "chêne",
+      "couleur": [
+        198,
+        142,
+        92
+      ],
+      "rugosite": 0.5
+    },
+    "acier": {
+      "nom": "acier anthracite",
+      "couleur": [
+        92,
+        97,
+        104
+      ],
+      "metal": 0.4,
+      "rugosite": 0.45
+    },
+    "tole_perforee": {
+      "couleur": [
+        92,
+        97,
+        104
+      ],
+      "opacite": 0.55,
+      "metal": 0.4,
+      "rugosite": 0.5
+    },
+    "portes": {
+      "couleur": [
+        240,
+        240,
+        236
+      ],
+      "rugosite": 0.6
+    },
+    "chassis": {
+      "nom": "aluminium anthracite",
+      "couleur": [
+        78,
+        82,
+        88
+      ],
+      "metal": 0.5,
+      "rugosite": 0.4
+    },
+    "verre": {
+      "couleur": [
+        200,
+        215,
+        220
+      ],
+      "opacite": 0.18,
+      "metal": 0,
+      "rugosite": 0.05
+    },
+    "luminaires": {
+      "couleur": [
+        245,
+        245,
+        242
+      ],
+      "rugosite": 0.4
+    },
+    "rails": {
+      "couleur": [
+        25,
+        25,
+        27
+      ],
+      "rugosite": 0.5
+    },
+    "placards": {
+      "couleur": [
+        246,
+        246,
+        243
+      ],
+      "rugosite": 0.5
+    }
+  },
+  "etape_5_mobilier_eclairage": {
+    "placards": {
+      "profondeur_m": 0.62,
+      "hauteur_m": 2.4,
+      "longueur_min_trait_pt": 25
+    },
+    "rails": [
+      {
+        "niveau": "Rez-de-chaussée",
+        "nom": "rail ouest, grande salle",
+        "de_plan_pt": [
+          340.3,
+          705
+        ],
+        "a_plan_pt": [
+          338.9,
+          985
+        ],
+        "spots_tous_les_m": 1.4
+      },
+      {
+        "niveau": "Rez-de-chaussée",
+        "nom": "rail est, grande salle",
+        "de_plan_pt": [
+          484.6,
+          705
+        ],
+        "a_plan_pt": [
+          484.6,
+          985
+        ],
+        "spots_tous_les_m": 1.4
+      },
+      {
+        "niveau": "Sous-sol",
+        "nom": "rail ouest, salle voûtée",
+        "de_plan_pt": [
+          352.4,
+          605
+        ],
+        "a_plan_pt": [
+          334.7,
+          895
+        ],
+        "spots_tous_les_m": 1.4
+      },
+      {
+        "niveau": "Sous-sol",
+        "nom": "rail est, salle voûtée",
+        "de_plan_pt": [
+          520.9,
+          605
+        ],
+        "a_plan_pt": [
+          523.4,
+          895
+        ],
+        "spots_tous_les_m": 1.4
+      }
+    ],
+    "suspensions": [
+      {
+        "niveau": "Rez-de-chaussée",
+        "position_plan_pt": [
+          384,
+          735
+        ],
+        "diametre_m": 0.6,
+        "hauteur_bas_m": 2.3
+      }
+    ],
+    "rails_regles": {
+      "distance_min_murs_m": 0.3,
+      "distance_min_obstacles_m": 0.15,
+      "longueur_min_m": 0.6,
+      "inclinaison_spots_deg": 30,
+      "orientation_spots": "vers_le_mur_le_plus_proche",
+      "marge_sous_plafond_m": 0.01
+    }
+  }
+}

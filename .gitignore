@@ -1,0 +1,9 @@
+node_modules/
+dist/
+__pycache__/
+*.pyc
+# plans clients et maquettes générées : jamais dans le dépôt
+exemples/**/*.ai
+exemples/**/*.pdf
+exemples/**/sortie/
+.DS_Store

@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="fr">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com">
+<title>Atelier 3D</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+:root {
+  --bg: #e9ecea; --panel: #f7f8f7; --raise: #ffffff; --fg: #1b221f; --muted: #5b6560; --line: #cdd4d0;
+  --accent: #2f6b55; --accent-soft: #dce9e3; --check: #a3392b; --check-soft: #f6e2df;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root {
+  --bg: #131816; --panel: #1a201e; --raise: #212825; --fg: #e4eae7; --muted: #98a39e; --line: #2e3733;
+  --accent: #7cc3a6; --accent-soft: #233a31; --check: #ec8f80; --check-soft: #3d2420; color-scheme: dark } }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 var(--sans); min-height: 100vh; }
+main { max-width: 880px; margin: 0 auto; padding: 56px 32px; display: grid; gap: 32px; }
+header h1 { font-size: 26px; font-weight: 600; margin: 0; letter-spacing: -0.015em; }
+header p { color: var(--muted); margin: 6px 0 0; max-width: 60ch; }
+.actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.btn { font: inherit; font-weight: 500; border: 1px solid var(--accent); background: var(--accent); color: var(--raise); border-radius: 6px; padding: 9px 16px; cursor: pointer; }
+.btn.ghost { background: transparent; color: var(--accent); }
+.btn:hover { filter: brightness(1.08); }
+section h2 { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 10px; }
+.liste { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.liste button { width: 100%; text-align: left; font: inherit; color: var(--fg); background: var(--raise); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; cursor: pointer; display: grid; gap: 2px; }
+.liste button:hover { border-color: var(--accent); }
+.liste .chemin { font-family: var(--mono); font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.vide { color: var(--muted); margin: 0; }
+.cadre { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px; display: grid; gap: 12px; }
+.ligne { display: grid; grid-template-columns: 140px minmax(0, 1fr) auto; gap: 10px; align-items: center; }
+.ligne input { font: 13px var(--mono); padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--raise); color: var(--fg); min-width: 0; }
+.etat { margin: 0; font-size: 13px; padding: 8px 10px; border-radius: 6px; background: var(--accent-soft); color: var(--fg); overflow-wrap: anywhere; }
+.etat.ko { background: var(--check-soft); }
+.note { font-size: 12px; color: var(--muted); margin: 0; }
+#gen { display: none; place-items: center; min-height: 100vh; text-align: center; padding: 32px; }
+#gen p { color: var(--muted); }
+.roue { width: 34px; height: 34px; border: 3px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: t 0.9s linear infinite; margin: 0 auto 16px; }
+@keyframes t { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .roue { animation: none; } }
+body.generation main { display: none; }
+body.generation #gen { display: grid; }
+</style>
+<body>
+<main>
+  <header>
+    <h1>Atelier 3D</h1>
+    <p>Du plan Illustrator à l’échelle à la visite 3D. Chaque projet est un dossier qui garde le plan, les réglages et la maquette générée.</p>
+  </header>
+  <div class="actions">
+    <button class="btn" id="nouveau">Nouveau projet à partir d’un plan…</button>
+    <button class="btn ghost" id="ouvrir">Ouvrir un projet…</button>
+  </div>
+  <section>
+    <h2>Projets récents</h2>
+    <ul class="liste" id="recents"></ul>
+  </section>
+  <section>
+    <h2>Moteur</h2>
+    <div class="cadre">
+      <p class="etat" id="etat-python">Vérification de Python…</p>
+      <div class="ligne"><label for="python">Python</label><input id="python" spellcheck="false"><button class="btn ghost" data-choisir="python">Choisir…</button></div>
+      <div class="ligne"><label for="blender">Blender</label><input id="blender" spellcheck="false" placeholder="non trouvé : escalier hélicoïdal simplifié"><button class="btn ghost" data-choisir="blender">Choisir…</button></div>
+      <p class="note">Blender sert à générer l’escalier hélicoïdal avec votre extension. Sans lui, le moteur produit une version simplifiée.</p>
+    </div>
+  </section>
+</main>
+<div id="gen"><div><div class="roue"></div><h1 style="font-size:18px;margin:0">Génération de la maquette</h1><p id="gen-msg">Lecture du plan et construction du GLB…</p></div></div>
+<script>
+const A = window.atelier;
+if (location.hash === '#generation') document.body.classList.add('generation');
+A.surMessage(t => { document.getElementById('gen-msg').textContent = t; document.querySelector('.roue').style.display = 'none'; });
+const $ = id => document.getElementById(id);
+function afficherPython(py) { const e = $('etat-python'); e.textContent = py.message; e.className = 'etat' + (py.ok ? '' : ' ko'); }
+async function charger() {
+  const d = await A.accueil();
+  const ul = $('recents'); ul.innerHTML = '';
+  if (!d.recents.length) ul.innerHTML = '<li><p class="vide">Aucun projet pour l’instant. Créez-en un à partir d’un plan Illustrator (.ai) ou PDF.</p></li>';
+  d.recents.forEach(p => { const li = document.createElement('li'), b = document.createElement('button');
+    b.innerHTML = '<b></b><span class="chemin"></span>'; b.querySelector('b').textContent = p.nom; b.querySelector('.chemin').textContent = p.dossier;
+    b.addEventListener('click', () => A.ouvrir(p.dossier)); li.appendChild(b); ul.appendChild(li); });
+  $('python').value = d.config.python; $('blender').value = d.config.blender;
+  afficherPython(d.python);
+}
+$('nouveau').addEventListener('click', () => A.nouveau());
+$('ouvrir').addEventListener('click', () => A.ouvrir());
+for (const k of ['python', 'blender']) $(k).addEventListener('change', async () => { const r = await A.parametres({ [k]: $(k).value.trim() }); afficherPython(r.python); });
+document.querySelectorAll('[data-choisir]').forEach(b => b.addEventListener('click', async () => {
+  const k = b.dataset.choisir, f = await A.choisirFichier(k === 'python' ? 'Choisir l’exécutable Python' : 'Choisir l’application Blender');
+  if (f) { $(k).value = f; const r = await A.parametres({ [k]: f }); afficherPython(r.python); } }));
+charger();
+</script>
+</body>
+</html>
