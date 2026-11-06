@@ -158,14 +158,14 @@ def main(src, dst, cfg='reglages.json'):
             b_ = W.intersection(g_.buffer(0.03)).convex_hull.intersection(g_)
             return b_.difference(b_.buffer(-r_ep).buffer(r_ep, join_style='mitre')).buffer(-0.005).buffer(0.005)
         ouvertures0 = [q for g_ in P.polys(lintels) for q in P.polys(ouverture(g_)) if q.area > 0.01]
-        door_shift, alleges = {}, []
+        door_shift, alleges, garde = {}, [], set()
         # charniere et angle de chaque vantail : 0 deg = porte fermee (dans l'axe de son ouverture), angle du plan = a0
         baies_c = []
         for v in [v for v in esc.get('vitrines', []) if by_name[v['niveau']] == i]:
             p0_, p1_ = S.pt(*v['de_plan_pt'], dx, dy), S.pt(*v['a_plan_pt'], dx, dy); L_ = math.dist(p0_, p1_)
             for a_, b_ in v.get('baies_porte_u_m', []):
                 u_ = (a_ + b_) / 2; baies_c.append(Point(p0_[0] + (p1_[0] - p0_[0]) * u_ / L_, p0_[1] + (p1_[1] - p0_[1]) * u_ / L_))
-        door_info = {}
+        door_info, axe_mur = {}, {}
         for k, l in enumerate(lv):
             rc = list(l.minimum_rotated_rectangle.exterior.coords)[:4]
             sides = sorted([(math.dist(rc[j], rc[(j + 1) % 4]), j) for j in range(4)])[:2]     # les deux petits cotes
@@ -186,6 +186,9 @@ def main(src, dst, cfg='reglages.json'):
                     tgt = bc; ax = (tgt.x - h_.x, tgt.y - h_.y)
                 if ax[0] * (tgt.x - h_.x) + ax[1] * (tgt.y - h_.y) < 0: ax = (-ax[0], -ax[1])
                 tg = math.atan2(ax[1], ax[0])
+                if gap is not None:          # decalage qui met le vantail dans l'axe du mur (milieu de l'epaisseur de l'ouverture)
+                    la_ = math.hypot(*ax); nx_, ny_ = -ax[1] / la_, ax[0] / la_
+                    d_ = (tgt.x - h_.x) * nx_ + (tgt.y - h_.y) * ny_; axe_mur[k] = (round(d_ * nx_, 3), round(d_ * ny_, 3))
             else:
                 tg = tl - math.pi / 2                # ouverture inconnue : on suppose le vantail dessine ouvert a 90 deg
             a0 = (math.degrees(tl - tg) + 180) % 360 - 180
@@ -195,6 +198,8 @@ def main(src, dst, cfg='reglages.json'):
             ddx, ddy, ddz = deplacement(f'{n}_porte_{k}')
             if not (ddx or ddy or ddz): continue
             door_shift[k] = (ddx, ddy, ddz)
+            if (DEP.get(f'{n}_porte_{k}') or {}).get('garder_ouverture'):     # reglage : le mur garde son ouverture du plan, seul le vantail bouge
+                garde.add(k); print(f'  porte {k} deplacee de ({ddx:.2f}, {ddy:.2f}, {ddz:.2f}) m dans son ouverture (mur inchange)'); continue
             near_ = [g_ for g_ in ouvertures0 if g_.distance(l) < 0.6]
             gap = max(near_, key=lambda g_: g_.area / (0.05 + g_.distance(l)), default=None)
             if gap is None or gap.distance(l) > 0.6: print(f'  porte {k} : ouverture introuvable, seul le vantail bouge'); continue
@@ -335,7 +340,7 @@ def main(src, dst, cfg='reglages.json'):
             ouv = (DEP.get(el) or {}).get('ouverture_deg')
             if ouv is not None and abs(float(ouv) - a0) > 0.05:      # angle d'ouverture regle : rotation autour de la charniere
                 l = affinity.rotate(l, float(ouv) - a0, origin=h_)
-            portes_out.append(dict(element=el, charniere=(h_.x + sx, h_.y + sy), ouverture_plan_deg=a0))
+            portes_out.append(dict(element=el, charniere=(h_.x + sx, h_.y + sy), ouverture_plan_deg=a0, axe_mur=axe_mur.get(k)))
             l = affinity.translate(l, sx, sy)
             if vitre:
                 add(f'{n}_porte_{k}__chassis', solid(P.extrude(l.difference(l.buffer(-0.03)) if l.buffer(-0.03).area > 0 else l, z + sz, hv, None)), mats['chassis'])
@@ -351,6 +356,7 @@ def main(src, dst, cfg='reglages.json'):
             ux_, uy_ = (p1_[0] - p0_[0]) / L_, (p1_[1] - p0_[1]) / L_
             baies, mont = [list(b_) for b_ in v.get('baies_porte_u_m', [])], list(v.get('montants_u_m', []))
             for k, (sx, sy, sz) in door_shift.items():
+                if k in garde: continue
                 c_ = lv[k].centroid
                 if LineString([p0_, p1_]).distance(c_) > 0.6: continue
                 u0, du = (c_.x - p0_[0]) * ux_ + (c_.y - p0_[1]) * uy_, sx * ux_ + sy * uy_
@@ -445,7 +451,7 @@ def main(src, dst, cfg='reglages.json'):
     out = dict(M=M, cx=float(c[0]), cz=float(c[2]), niveaux=[dict(nom=nv['nom'], y=float(Z[k]), dx=shift[k][0], dy=shift[k][1]) for k, nv in enumerate(niveaux)], pieces=[])
     out['murs'] = [[ring(r_) for r_ in lv_] for lv_ in walls_out]
     out['marches'] = marches_out
-    out['portes'] = [dict(element=d_['element'], charniere=[round(d_['charniere'][0] - c[0], 3), round(-d_['charniere'][1] - c[2], 3)], ouverture_plan_deg=d_['ouverture_plan_deg']) for d_ in portes_out]
+    out['portes'] = [dict(element=d_['element'], charniere=[round(d_['charniere'][0] - c[0], 3), round(-d_['charniere'][1] - c[2], 3)], ouverture_plan_deg=d_['ouverture_plan_deg'], axe_mur=d_['axe_mur']) for d_ in portes_out]
     for r in rooms_out:
         g = r.pop('poly')
         r['contours'] = [dict(ext=ring(p_.exterior), trous=[ring(h) for h in p_.interiors]) for p_ in P.polys(g)]

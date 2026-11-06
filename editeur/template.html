@@ -124,6 +124,7 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
 .movebox .row { display: flex; gap: 6px; flex-wrap: wrap; }
 .movebox .btn { padding: 4px 10px; }
 .movebox .ang { display: grid; gap: 6px; }
+.movebox .garde { display: flex; gap: 6px; align-items: center; font-size: 12px; color: var(--fg); }
 .movebox .ang label { display: flex; gap: 6px; align-items: center; font-size: 12px; color: var(--muted); }
 .movebox .ang input[type=range] { flex: 1; min-width: 0; accent-color: var(--accent); }
 .movebox .ang input[type=number] { width: 64px; font: 13px var(--mono); padding: 4px 6px; border: 1px solid var(--line); border-radius: 5px; background: var(--panel); color: var(--fg); }
@@ -639,6 +640,7 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
   const depOf = (root, el) => { const d = (get(root, DEPP) || {})[el] || {}; return [+d.x_m || 0, +d.y_m || 0, +d.z_m || 0]; };
   const PORTE = {}; (PCS.portes || []).forEach(p_ => { PORTE[p_.element] = p_; });
   const angOf = (root, el) => { const d = (get(root, DEPP) || {})[el] || {}, p_ = PORTE[el]; return d.ouverture_deg != null ? +d.ouverture_deg : (p_ ? p_.ouverture_plan_deg : 0); };
+  const gardeOf = (root, el) => !!((get(root, DEPP) || {})[el] || {}).garder_ouverture;
   let moveMode = false, selEl = null; const baseW = {}, hilite = [];
   const meshesOf = el => { const out = []; if (model) model.traverse(o => { if (o.isMesh && elOf(o.name) === el) out.push(o); }); return out; };
   function applyDep(el) {   // aperçu : le GLB contient déjà le réglage d'origine, on ajoute l'écart (rotation autour de la charnière, puis translation)
@@ -656,12 +658,13 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
   tc.addEventListener('dragging-changed', e => { controls.enabled = !e.value; if (!e.value) placeProxy(); });
   tc.addEventListener('change', draw);
   tc.addEventListener('objectChange', () => { const d = proxy.position.clone().sub(proxy0); setDep(selEl, [dep0[0] + d.x, dep0[1] - d.z, dep0[2] + d.y], false); });
-  function setDep(el, v, replace = true, ang) {
+  function setDep(el, v, replace = true, ang, garde) {
     const all = get(R, DEPP), o = get(ORIG, DEPP)[el]; v = v.map(x => Math.round(x * 1000) / 1000);
     const ov = depOf(ORIG, el), p_ = PORTE[el];
     if (ang === undefined) ang = angOf(R, el); ang = Math.round(ang * 10) / 10;
-    if (v.every((x, i) => Math.abs(x - ov[i]) < 5e-4) && (!p_ || Math.abs(ang - angOf(ORIG, el)) < 0.05)) { if (o) all[el] = JSON.parse(JSON.stringify(o)); else delete all[el]; }
-    else { all[el] = { nom: elLabel(el), x_m: v[0], y_m: v[1], z_m: v[2] }; if (p_ && Math.abs(ang - p_.ouverture_plan_deg) >= 0.05) all[el].ouverture_deg = ang; }
+    if (garde === undefined) garde = gardeOf(R, el);
+    if (v.every((x, i) => Math.abs(x - ov[i]) < 5e-4) && (!p_ || Math.abs(ang - angOf(ORIG, el)) < 0.05) && garde === gardeOf(ORIG, el)) { if (o) all[el] = JSON.parse(JSON.stringify(o)); else delete all[el]; }
+    else { all[el] = { nom: elLabel(el), x_m: v[0], y_m: v[1], z_m: v[2] }; if (p_ && Math.abs(ang - p_.ouverture_plan_deg) >= 0.05) all[el].ouverture_deg = ang; if (garde) all[el].garder_ouverture = true; }
     applyDep(el); updCount(); updMoveBox(); if (replace) placeProxy();
   }
   function placeProxy() { if (!selEl) return; const b = new THREE.Box3(); meshesOf(selEl).forEach(o => b.expandByObject(o)); b.getCenter(proxy.position); proxy0 = proxy.position.clone(); dep0 = depOf(R, selEl); draw(); }
@@ -682,8 +685,10 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
       movebox.dataset.el = selEl;
       movebox.innerHTML = `<h4></h4><div class="xyz">${['X (est)', 'Y (nord)', 'Z (haut)'].map((l, i) => `<label>${l}<input type="number" step="0.05" data-i="${i}"></label>`).join('')}</div>
         ${door && PORTE[selEl] ? `<div class="ang"><label>Ouverture <input type="range" min="-180" max="180" step="1" data-ang="r"><input type="number" step="5" data-ang="n"> °</label>
-          <div class="row"><button class="btn ghost" data-act="fermer">Fermer la porte</button><button class="btn ghost" data-act="ouvrir">Ouvrir à 90°</button><button class="btn ghost" data-act="sens">Autre sens</button></div></div>` : ''}
-        <p class="note">${door ? 'Ouverture : 0° = porte fermée. Position en mètres depuis le plan. À la génération, l’ancienne ouverture est rebouchée et le mur est percé au nouvel endroit : aucun trou.' : 'En mètres depuis la position du plan.'}</p>
+          <div class="row"><button class="btn ghost" data-act="fermer">Fermer la porte</button><button class="btn ghost" data-act="ouvrir">Ouvrir à 90°</button><button class="btn ghost" data-act="sens">Autre sens</button></div></div>
+          <label class="garde"><input type="checkbox" data-garde> Garder l’ouverture du mur (seule la porte bouge)</label>
+          ${PORTE[selEl].axe_mur ? '<div class="row"><button class="btn ghost" data-act="axe">Centrer dans l’axe du mur</button></div>' : ''}` : ''}
+        <p class="note" data-note></p>
         <div class="row"><button class="btn ghost" data-act="zero">Remettre comme sur le plan</button><button class="btn ghost" data-act="close">Terminer</button></div>`;
       movebox.querySelector('h4').textContent = elLabel(selEl);
       movebox.querySelectorAll('input[data-i]').forEach(inp => inp.addEventListener('change', () => {
@@ -695,10 +700,20 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
       act('fermer', () => setDep(selEl, depOf(R, selEl), true, 0));
       act('ouvrir', () => { const a0 = PORTE[selEl].ouverture_plan_deg, cur = angOf(R, selEl); setDep(selEl, depOf(R, selEl), true, (cur || a0 || 1) < 0 ? -90 : 90); });
       act('sens', () => setDep(selEl, depOf(R, selEl), true, -angOf(R, selEl)));
+      act('axe', () => {   // garde le décalage le long du mur, remplace celui à travers le mur par celui qui centre la porte dans l'épaisseur
+        const a = PORTE[selEl].axe_mur, L = Math.hypot(a[0], a[1]), w = depOf(R, selEl);
+        if (L > 1e-3) { const nx = a[0] / L, ny = a[1] / L, d = w[0] * nx + w[1] * ny; w[0] += (L - d) * nx; w[1] += (L - d) * ny; }
+        setDep(selEl, w, true, undefined, true); });
+      const cb = movebox.querySelector('[data-garde]'); if (cb) cb.addEventListener('change', () => setDep(selEl, depOf(R, selEl), true, undefined, cb.checked));
       movebox.querySelector('[data-act="close"]').addEventListener('click', () => selectEl(null));
     }
     movebox.querySelectorAll('input[data-i]').forEach(inp => { if (document.activeElement !== inp) inp.value = v[+inp.dataset.i]; });
     movebox.querySelectorAll('[data-ang]').forEach(inp => { if (document.activeElement !== inp) inp.value = angOf(R, selEl); });
+    const cb = movebox.querySelector('[data-garde]'); if (cb) cb.checked = gardeOf(R, selEl);
+    const nt = movebox.querySelector('[data-note]');
+    if (nt) nt.textContent = !door ? 'En mètres depuis la position du plan.' : gardeOf(R, selEl)
+      ? 'Ouverture : 0° = porte fermée. Le mur garde son ouverture du plan : seule la porte se décale (par exemple dans l’axe du mur).'
+      : 'Ouverture : 0° = porte fermée. Position en mètres depuis le plan. À la génération, l’ancienne ouverture est rebouchée et le mur est percé au nouvel endroit : aucun trou.';
   }
   document.getElementById('tool-move').addEventListener('click', () => {
     moveMode = !moveMode; press('tool-', moveMode ? 'tool-move' : '');
@@ -785,7 +800,7 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
     out.push([path, a, b]);
   }
   function describe(p) {
-    if (p[1] === 'deplacements' && p.length > 2) return 'Déplacement › ' + elLabel(p[2]) + (p.length > 3 ? ' › ' + ({ x_m: 'X', y_m: 'Y', z_m: 'Z', ouverture_deg: 'ouverture' }[p[3]] || p[3]) : '');
+    if (p[1] === 'deplacements' && p.length > 2) return 'Déplacement › ' + elLabel(p[2]) + (p.length > 3 ? ' › ' + ({ x_m: 'X', y_m: 'Y', z_m: 'Z', ouverture_deg: 'ouverture', garder_ouverture: 'garder l’ouverture du mur' }[p[3]] || p[3]) : '');
     if (p[1] === 'pieces' && (p[2] === 'liste' || p[2] === 'separations') && p.length > 3) {
       const e = get(R, p.slice(0, 4)) || get(ORIG, p.slice(0, 4)), what = p[2] === 'liste' ? 'Pièce' : 'Coupure';
       const rest = p.slice(4).map(k => SOL_LAB[k] || k).join(' › ');
