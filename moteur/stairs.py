@@ -17,7 +17,20 @@ def spiral_center(page, layer='Spiral'):
                 best = ((r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2)
     outer = max((d['rect'] for d in page.get_drawings() if d.get('layer', '').startswith(layer) and d['type'] == 's'),
                 key=lambda r: r.width)
+    if best is None: best = centre_des_marches(page, layer)
     return best, outer.width / 2
+
+def centre_des_marches(page, layer='Spiral'):
+    """Sans petit cercle central : point le plus proche de toutes les lignes de marches (elles rayonnent depuis l'axe)."""
+    A, B = np.zeros((2, 2)), np.zeros(2)
+    n = 0
+    for d in page.get_drawings():
+        if not d.get('layer', '').startswith(layer) or d['type'] != 's' or len(d['items']) != 1 or d['items'][0][0] != 'l': continue
+        p0, p1 = d['items'][0][1], d['items'][0][2]; v = np.array([p1.x - p0.x, p1.y - p0.y]); L = np.linalg.norm(v)
+        if L < 20: continue
+        u = v / L; P_ = np.eye(2) - np.outer(u, u); A += P_; B += P_ @ np.array([p0.x, p0.y]); n += 1
+    if n < 3: return None
+    c = np.linalg.solve(A, B); return (float(c[0]), float(c[1]))
 
 def spiral(center, R, z0, z1, rise=0.19, step_deg=30, start_deg=0, thick=0.05):
     n = max(1, round((z1 - z0) / rise)); h = (z1 - z0) / n
