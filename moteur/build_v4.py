@@ -363,16 +363,20 @@ def main(src, dst, cfg='reglages.json'):
         add(f'{n}_sol', solid([m2 for f_, z0, h in sols for m2 in P.extrude(f_.difference(done), z0, h, None)]), mats['sol'], uv=sol)
         add(f'{n}_plinthes', solid(plin), mats['plinthes'])
         add(f'{n}_dalle', solid(P.extrude(outline, z - SLAB, SLAB - 0.02, None)), mats['dalle'])
-        for pf in [p for p in murs.get('plafonds', []) if by_name.get(p['niveau'], -1) == i and p['forme'] == 'voute_berceau']:
-            k = pf.get('detection_pieces_fermeture_m', 1.5)
-            sealed = W.buffer(k, join_style='mitre').buffer(-k, join_style='mitre')
+        for kv, pf in enumerate([p for p in murs.get('plafonds', []) if by_name.get(p['niveau'], -1) == i and p.get('forme') in V.FORMES]):
             pt0 = Point(S.pt(*pf['piece_plan_pt'], dx, dy))
-            room = next((P.Polygon(h) for p_ in P.polys(sealed) for h in p_.interiors if P.Polygon(h).contains(pt0)), None)
-            if room is None: print('  piece introuvable pour', pf['nom']); continue
-            vb = V.Berceau(room, pf['hauteur_naissance_m'], pf['hauteur_cle_m'], pf.get('axe_deg'))
+            # la piece de l'etape Pieces qui contient le point, sinon l'espace ferme par les murs
+            room = next((r['poly'] for r in rooms if not r['supprimee'] and r['poly'].contains(pt0)), None)
+            if room is None:
+                k = pf.get('detection_pieces_fermeture_m', 1.5)
+                sealed = W.buffer(k, join_style='mitre').buffer(-k, join_style='mitre')
+                room = next((P.Polygon(h) for p_ in P.polys(sealed) for h in p_.interiors if P.Polygon(h).contains(pt0)), None)
+            if room is None: print('  piece introuvable pour', pf.get('nom')); continue
+            room = max(P.polys(room), key=lambda q: q.area)
+            vb = V.Voute(room, pf['hauteur_naissance_m'], pf['hauteur_cle_m'], pf.get('axe_deg'), pf['forme'], pf.get('travees'))
             vaults.setdefault(i, []).append(vb)
-            add(f'{n}_voute', vb.mesh(z, tremie if i == lo and lo != hi else None), mats['voute'])
-            print(f"  {pf['nom']} : portee {2 * vb.a:.2f} m, axe {vb.theta:.0f} deg, naissance {vb.n:.2f} m, cle {vb.n + vb.f:.2f} m")
+            add(f'{n}_voute' + (f'_{kv}' if kv else ''), vb.mesh(z, tremie if i == lo and lo != hi else None), mats['voute'])
+            print(f"  {pf.get('nom')} ({vb.forme}) : portee {2 * vb.a:.2f} m, axe {vb.theta:.0f} deg, naissance {vb.n:.2f} m, cle {vb.n + vb.f:.2f} m")
         # portes : vantaux dessines sur le plan, vitres si un point de reglage tombe dedans
         vit = [Point(S.pt(*q['point'], dx, dy)) for q in pcfg.get('vantaux_vitres_plan_pt', []) if by_name.get(q['niveau'], -1) == i]
         hv = pcfg.get('hauteur_vantail_m', 2.04)

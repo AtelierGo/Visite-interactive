@@ -269,18 +269,12 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
           F(PP.concat('surface_min_m2'), 'Surface minimale d’une pièce', { type: 'number', step: 0.1, u: 'm²', note: 'Plus petit, l’espace rejoint la pièce voisine (seuils, renfoncements).' }) ] } ] },
     { id: 'murs', t: 'Murs et plafonds', s: 'Hauteurs, voûte, linteaux, poteaux',
       d: 'Hauteurs sous plafond par niveau, forme des plafonds, murs à refermer au-dessus des ouvertures et éléments de structure.',
-      lintels: true,
+      lintels: true, plafonds: true,
       groups: [
         { h: 'Hauteurs', f: [
           ...parNiveau('hauteur_sous_plafond_m', n => 'Hauteur sous plafond, ' + n.nom, { type: 'number', step: 0.05, u: 'm', src: 'photo', warn: true }),
           F(MU.concat('epaisseur_dalle_m'), 'Épaisseur de dalle', { type: 'number', step: 0.01, u: 'm' }),
           F(MU.concat('hauteur_linteau_m'), 'Haut des ouvertures', { type: 'number', step: 0.01, u: 'm' }) ] },
-        { h: 'Voûtes', f: [
-          ...parListe(MU.concat('plafonds'), (b, e) => [
-            F(b.concat('forme'), (e.nom || 'Plafond') + ', forme', { type: 'select', opts: [['plat', 'Plat'], ['voute_berceau', 'Voûte en berceau'], ['voute_aretes', "Voûte d'arêtes"], ['cathedrale', 'Cathédrale']], src: 'photo' }),
-            F(b.concat('hauteur_naissance_m'), 'Naissance', { type: 'number', step: 0.05, u: 'm', src: 'photo', warn: true }),
-            F(b.concat('hauteur_cle_m'), 'Clé', { type: 'number', step: 0.05, u: 'm', src: 'photo', warn: true })]),
-          ...((get(R, MU.concat('plafonds')) || []).length ? [F(null, 'Afficher la voûte dans l’aperçu', { type: 'toggle', live: 'voute' })] : []) ] },
         { h: 'Poteaux', f: parListe(MU.concat('poteaux'), (b, e, k) => [F(b.concat('diametre_m'), `Poteau ${k + 1} (${e.niveau}), diamètre`, { type: 'number', step: 0.01, u: 'm', src: 'plan' })]) },
         { h: 'Nettoyage', f: [
           F(MU.concat('nettoyage_bandes_etroites_m'), 'Bandes étroites supprimées sous', { type: 'number', step: 0.05, u: 'm' }),
@@ -492,9 +486,24 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
       const l = NIV.indexOf(ch.niveau); if (l < 0) return;
       const [a, b] = ch.ligne_plan_pt.map(([x, y]) => { const [X, Z] = fromPlan(x, y, l); return new THREE.Vector3(X, LEVEL_Y[l] + 0.05, Z); });
       const m = new THREE.Mesh(new THREE.BoxGeometry(a.distanceTo(b), 0.01, 0.09), new THREE.MeshBasicMaterial({ color: 0xd6a23a, depthTest: false }));
-      m.position.copy(a).add(b).multiplyScalar(0.5); m.rotation.y = -Math.atan2(b.z - a.z, b.x - a.x); m.renderOrder = 12; m.userData.lvl = l; stepGroup.add(m);
+      m.position.copy(a).add(b).multiplyScalar(0.5); m.rotation.y = -Math.atan2(b.z - a.z, b.x - a.x); m.renderOrder = 12; m.userData.lvl = l; m.userData.step = ch; stepGroup.add(m);
+      if (ch === selStep) m.material.color.set(0x2f6b55);
     });
+    placeStepProxy();
   }
+  // ---------- Déplacer des marches : on fait glisser leur trait dans l'aperçu (ou flèches), la ligne du plan suit ----------
+  let selStep = null, step0 = null; const stepProxy = new THREE.Object3D(); scene.add(stepProxy);
+  function placeStepProxy() {
+    if (typeof tcS === 'undefined') return;
+    const m = stepGroup.children.find(o => o.userData.step === selStep);
+    if (!m || current !== 'pieces' || !lvlShown(m.userData.lvl)) { tcS.detach(); return; }
+    if (!tcS.dragging) { stepProxy.position.copy(m.position); step0 = { pos: m.position.clone(), pts: selStep.ligne_plan_pt.map(p => p.slice()) }; }
+    if (tcS.object !== stepProxy) tcS.attach(stepProxy);
+  }
+  function moveStep(ch, dxm, dzm) {    // décalage en mètres (x vers la droite du plan, z vers le bas du plan)
+    ch.ligne_plan_pt = ch.ligne_plan_pt.map(([x, y]) => [Math.round((x + dxm / PCS.M) * 10) / 10, Math.round((y + dzm / PCS.M) * 10) / 10]);
+  }
+  function selectStep(ch) { selStep = ch; buildSteps(); render(); }
   buildSteps();
   const lintelGroup = new THREE.Group(); scene.add(lintelGroup);
   const lintelsCfg = () => (get(R, MU).linteaux_traces = get(R, MU).linteaux_traces || []);
@@ -516,7 +525,7 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
     });
     sepGroup.visible = current === 'pieces';
     lintelGroup.visible = current === 'murs'; lintelGroup.children.forEach(o => { o.visible = lvlShown(o.userData.lvl); });
-    stepGroup.visible = current === 'pieces' && view !== 'eye'; stepGroup.children.forEach(o => { o.visible = lvlShown(o.userData.lvl); });
+    stepGroup.visible = current === 'pieces' && view !== 'eye'; stepGroup.children.forEach(o => { o.visible = lvlShown(o.userData.lvl); }); placeStepProxy();
     zoneGroup.visible = (current === 'import' || current === 'pieces') && view !== 'eye'; zoneGroup.children.forEach(o => { o.visible = lvlShown(o.userData.lvl); }); sepGroup.children.forEach(o => { o.visible = lvlShown(o.userData.lvl); });
     draw();
   }
@@ -636,6 +645,10 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
       return updDraw();
     }
     if (current !== 'pieces' && current !== 'materiaux') return;
+    if (current === 'pieces' && !tcS.dragging && !tcS.axis) {
+      const hs = aim(e).intersectObjects(stepGroup.children.filter(o => o.visible), false)[0];
+      if (hs) { selectStep(hs.object.userData.step); const row = document.querySelector('.room.stepsel'); if (row) row.scrollIntoView({ block: 'nearest' }); return; }
+    }
     const hit = aim(e).intersectObjects(ovl.children, true).find(h => h.object.userData.room && !gone(h.object.userData.room) && lvlShown(h.object.userData.room.lvl));
     if (!hit || gone(hit.object.userData.room)) return;
     selRoom = hit.object.userData.room; if (current === 'materiaux') solTarget = selRoom;
@@ -684,6 +697,12 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
     draw();
   }
   const tc = new THREE.TransformControls(camera, renderer.domElement); tc.setSize(0.85); scene.add(tc);
+  var tcS = new THREE.TransformControls(camera, renderer.domElement); tcS.setSize(0.85); tcS.showY = false; scene.add(tcS);
+  tcS.addEventListener('dragging-changed', e => { controls.enabled = !e.value; if (!e.value) { buildSteps(); updCount(); render(); } });
+  tcS.addEventListener('change', draw);
+  tcS.addEventListener('objectChange', () => { if (!selStep || !step0) return; const d = stepProxy.position.clone().sub(step0.pos);
+    selStep.ligne_plan_pt = step0.pts.map(p => p.slice()); moveStep(selStep, d.x, d.z);
+    const m = stepGroup.children.find(o => o.userData.step === selStep); if (m) m.position.set(step0.pos.x + d.x, m.position.y, step0.pos.z + d.z); });
   const proxy = new THREE.Object3D(); scene.add(proxy); let proxy0 = null, dep0 = null;
   tc.addEventListener('dragging-changed', e => { controls.enabled = !e.value; if (!e.value) placeProxy(); });
   tc.addEventListener('change', draw);
@@ -1052,6 +1071,72 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
     b.addEventListener('click', () => startDraw('zone')); g.appendChild(b);
     groupsEl.appendChild(g);
   }
+  // ---------- Plafonds voûtés : une entrée par pièce (etape_2_murs.plafonds) ----------
+  function plafondsCfg() { return (get(R, MU).plafonds = get(R, MU).plafonds || []); }
+  const FORMES_V = [['voute_berceau', 'Voûte en berceau'], ['voute_aretes', 'Voûte d’arêtes'], ['cathedrale', 'Cathédrale (deux pans)']];
+  const dansPoly = (x, z, ring) => { let c = false; for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) { const [xi, zi] = ring[i], [xj, zj] = ring[j];
+    if ((zi > z) !== (zj > z) && x < (xj - xi) * (z - zi) / (zj - zi) + xi) c = !c; } return c; };
+  const pieceDe = e => { const l = NIV.indexOf(e.niveau); if (l < 0 || !e.piece_plan_pt) return null; const [x, z] = fromPlan(e.piece_plan_pt[0], e.piece_plan_pt[1], l);
+    return rooms.find(r => r.lvl === l && !gone(r) && r.contours.some(c => dansPoly(x, z, c.ext) && !(c.trous || []).some(t => dansPoly(x, z, t)))) || null; };
+  const pointDe = r => (r.src && r.src.point_plan_pt) ? r.src.point_plan_pt.slice() : toPlan(r.centre[0], r.centre[1], r.lvl);
+  function renderPlafonds() {
+    const g = document.createElement('div'); g.className = 'group';
+    g.innerHTML = '<h3>Plafonds voûtés</h3>';
+    const p0 = document.createElement('p'); p0.className = 'note'; p0.style.margin = '0 0 8px';
+    p0.textContent = 'Les plafonds sont plats par défaut. Choisissez une pièce pour lui donner une voûte ou un plafond cathédrale. Hauteurs comptées depuis le sol du niveau ; mesurables sur une élévation.';
+    g.appendChild(p0);
+    const ul = document.createElement('ul'); ul.className = 'rooms';
+    plafondsCfg().forEach((e, k) => {
+      const l = NIV.indexOf(e.niveau); if (l >= 0 && !lvlShown(l)) return;
+      const r = pieceDe(e), H = l >= 0 ? NIVS[l].hauteur_sous_plafond_m : null;
+      const li = document.createElement('li'); li.className = 'room'; li.style.gridTemplateColumns = '14px minmax(0,1fr)';
+      li.innerHTML = `<span class="sw" style="background:${r ? r.color : '#999'}"></span><div style="display:grid;gap:6px;min-width:0">
+        <input type="text" aria-label="Nom de la voûte"><div class="steprow"></div><span class="note"></span></div>`;
+      const nm = li.querySelector('input'); nm.value = e.nom || ''; nm.addEventListener('input', () => { e.nom = nm.value; updCount(); });
+      const box = li.querySelector('.steprow'), note = li.querySelector('.note');
+      const sel = (lab, opts, val, fn) => { const w = document.createElement('label'); w.className = 'mini'; w.innerHTML = `<span>${lab}</span><select></select>`;
+        const s_ = w.querySelector('select'); s_.innerHTML = opts.map(([v, t]) => `<option value="${v}">${escH(t)}</option>`).join(''); s_.value = val; s_.style.width = '165px';
+        s_.addEventListener('change', () => { fn(s_.value); updCount(); render(); }); box.appendChild(w); return s_; };
+      const num = (lab, key, step, u, vide) => { const w = document.createElement('label'); w.className = 'mini'; w.innerHTML = `<span>${lab}</span><input type="number" step="${step}"${vide ? ` placeholder="${vide}"` : ''}><em>${u}</em>`;
+        const i = w.querySelector('input'); i.value = e[key] ?? ''; i.addEventListener('change', () => { const t = i.value.trim().replace(',', '.');
+          if (t === '' && vide) e[key] = null; else { const v = parseFloat(t); if (isNaN(v)) return; e[key] = v; } updCount(); render(); }); box.appendChild(w); };
+      const opts = rooms.filter(x => !gone(x) && (l < 0 || x.lvl === l)).map(x => [String(rooms.indexOf(x)), roomName(x)]);
+      if (!r) opts.unshift(['', 'Choisir la pièce…']);
+      sel('Pièce', opts, r ? String(rooms.indexOf(r)) : '', v => { if (v === '') return; const x = rooms[+v]; e.niveau = NIV[x.lvl]; e.piece_plan_pt = pointDe(x); });
+      sel('Forme', FORMES_V, e.forme, v => { e.forme = v; });
+      num('Naissance', 'hauteur_naissance_m', 0.05, 'm'); num('Clé', 'hauteur_cle_m', 0.05, 'm');
+      num('Axe', 'axe_deg', 1, '°', 'auto');
+      if (e.forme === 'voute_aretes') num('Travées', 'travees', 1, '', 'auto');
+      const del = document.createElement('button'); del.className = 'link'; del.textContent = 'Plafond plat';
+      del.addEventListener('click', () => { plafondsCfg().splice(k, 1); updCount(); render(); }); box.appendChild(del);
+      const msgs = [];
+      if (!r) msgs.push('Pièce introuvable : choisissez-la dans la liste.');
+      if (luElev(MU.concat('plafonds', k, 'hauteur_cle_m')) || luElev(MU.concat('plafonds', k, 'hauteur_naissance_m'))) msgs.push('Hauteurs lues sur l’élévation.');
+      if (H != null && e.hauteur_cle_m > H + 1e-6) msgs.push(`La clé dépasse la hauteur sous plafond du niveau (${fmtM(H)}) : la voûte entrera dans la dalle.`);
+      if (e.hauteur_cle_m <= e.hauteur_naissance_m) msgs.push('La clé doit être plus haute que la naissance.');
+      msgs.push('L’axe vide suit la longueur de la pièce. Pris en compte à la régénération.');
+      note.textContent = msgs.join(' ');
+      ul.appendChild(li);
+    });
+    g.appendChild(ul);
+    if (!ul.children.length) { const p = document.createElement('p'); p.className = 'empty'; p.style.margin = '0'; p.textContent = 'Aucun plafond voûté sur ce niveau.'; g.appendChild(p); }
+    const act = document.createElement('div'); act.className = 'actions'; act.style.marginTop = '8px';
+    const b = document.createElement('button'); b.className = 'btn ghost'; b.textContent = 'Ajouter un plafond voûté';
+    b.addEventListener('click', () => {
+      const l = level === 'all' ? 0 : +level;
+      const x = (selRoom && !gone(selRoom) && lvlShown(selRoom.lvl)) ? selRoom : rooms.filter(r_ => r_.lvl === l && !gone(r_)).sort((a, c) => c.surface - a.surface)[0];
+      if (!x) return;
+      const H = NIVS[x.lvl].hauteur_sous_plafond_m;
+      plafondsCfg().push({ niveau: NIV[x.lvl], nom: 'Voûte ' + roomName(x), piece_plan_pt: pointDe(x), forme: 'voute_berceau',
+        hauteur_naissance_m: Math.round(H * 0.7 * 20) / 20, hauteur_cle_m: H, axe_deg: null, travees: null });
+      updCount(); render(); });
+    act.appendChild(b);
+    if (plafondsCfg().length) { const w = document.createElement('label'); w.className = 'mini'; w.style.alignSelf = 'center';
+      w.innerHTML = '<span><input type="checkbox"> Afficher les voûtes dans l’aperçu</span>'; const c = w.querySelector('input'); c.checked = showVault;
+      c.addEventListener('change', () => { showVault = c.checked; applyLevel(); }); act.appendChild(w); }
+    g.appendChild(act);
+    groupsEl.appendChild(g);
+  }
   function renderLintels() {
     const g = document.createElement('div'); g.className = 'group';
     g.innerHTML = '<h3>Murs au-dessus des ouvertures</h3>';
@@ -1085,7 +1170,7 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
     stepsCfg().forEach((ch, ci) => {
       const l = NIV.indexOf(ch.niveau); if (!lvlShown(l)) return;
       const info = (PCS.marches || []).find(m => m.index === ci && get(ORIG, MU.concat('changements_de_niveau', ci)) && same(get(ORIG, MU.concat('changements_de_niveau', ci, 'ligne_plan_pt')), ch.ligne_plan_pt));
-      const li = document.createElement('li'); li.className = 'room'; li.style.gridTemplateColumns = '14px minmax(0,1fr)';
+      const li = document.createElement('li'); li.className = 'room' + (ch === selStep ? ' sel stepsel' : ''); li.style.gridTemplateColumns = '14px minmax(0,1fr)';
       const tot = ch.mode === 'cote' ? ch.cote_m : ch.marches * ch.hauteur_marche_m;
       li.innerHTML = `<span class="sw" style="background:#d6a23a;height:5px"></span><div style="display:grid;gap:6px;min-width:0">
         <input type="text" aria-label="Nom des marches">
@@ -1099,8 +1184,21 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
       const sw = document.createElement('label'); sw.className = 'mini'; sw.innerHTML = '<span>Côté qui monte</span><select></select>';
       const sel = sw.querySelector('select'); sel.innerHTML = SIDES.map(([v, t]) => `<option value="${v}">${t}</option>`).join(''); sel.value = ch.cote_qui_monte;
       sel.addEventListener('change', () => { ch.cote_qui_monte = sel.value; updCount(); }); box.appendChild(sw);
+      const mv = document.createElement('div'); mv.className = 'mini'; mv.style.gridColumn = '1 / -1';
+      mv.innerHTML = `<span>Déplacer${ch === selStep ? ' : faites glisser les flèches dans l’aperçu, ou' : ''} pas de</span><div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center">
+        <input type="number" step="0.01" min="0.005" value="${moveStep.pas || 0.05}" style="width:60px"><em>m</em></div>`;
+      const pas = mv.querySelector('input'), row = mv.querySelector('div');
+      pas.addEventListener('change', () => { const v = parseFloat(pas.value.replace(',', '.')); if (v > 0) moveStep.pas = v; });
+      [['←', -1, 0, 'Vers la gauche du plan'], ['→', 1, 0, 'Vers la droite du plan'], ['↑', 0, -1, 'Vers le haut du plan'], ['↓', 0, 1, 'Vers le bas du plan']].forEach(([t, sx, sz, tip]) => {
+        const b = document.createElement('button'); b.className = 'btn ghost'; b.style.padding = '2px 9px'; b.textContent = t; b.title = tip; b.setAttribute('aria-label', tip);
+        b.addEventListener('click', () => { const v = moveStep.pas || 0.05; moveStep(ch, sx * v, sz * v); selStep = ch; buildSteps(); updCount(); render(); }); row.appendChild(b); });
+      if (ch !== selStep) { const b = document.createElement('button'); b.className = 'link'; b.textContent = 'Sélectionner'; b.addEventListener('click', () => selectStep(ch)); row.appendChild(b); }
+      const o0 = (get(ORIG, MU.concat('changements_de_niveau')) || [])[ci];
+      if (o0 && !same(o0.ligne_plan_pt, ch.ligne_plan_pt) && o0.nom === ch.nom) { const b = document.createElement('button'); b.className = 'link'; b.textContent = 'Remettre en place';
+        b.addEventListener('click', () => { ch.ligne_plan_pt = JSON.parse(JSON.stringify(o0.ligne_plan_pt)); buildSteps(); updCount(); render(); }); row.appendChild(b); }
+      box.appendChild(mv);
       const del = document.createElement('button'); del.className = 'link'; del.textContent = 'Supprimer';
-      del.addEventListener('click', () => { stepsCfg().splice(ci, 1); buildSteps(); updCount(); render(); }); box.appendChild(del);
+      del.addEventListener('click', () => { if (selStep === ch) selStep = null; stepsCfg().splice(ci, 1); buildSteps(); updCount(); render(); }); box.appendChild(del);
       ul.appendChild(li);
     });
     g.appendChild(ul);
@@ -1108,7 +1206,7 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
     const b = document.createElement('button'); b.className = 'btn ghost'; b.style.marginTop = '8px'; b.textContent = 'Tracer des marches';
     b.addEventListener('click', () => startDraw('marche')); g.appendChild(b);
     const n = document.createElement('p'); n.className = 'note'; n.style.margin = '4px 0 0';
-    n.textContent = 'Tracez la dernière contremarche (celle du haut) ; les girons descendent vers le côté bas. Pris en compte à la régénération.';
+    n.textContent = 'Tracez la dernière contremarche (celle du haut) ; les girons descendent vers le côté bas. Cliquez un trait jaune pour le déplacer. Pris en compte à la régénération.';
     g.appendChild(n);
   }
   function renderRooms() {
@@ -1181,7 +1279,13 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
   const EP = I.concat('elevations');
   const mesuresR = () => (get(R, EP) || {}).mesures || [];
   const fmtM = v => v.toFixed(2).replace('.', ',') + ' m';
-  const CIBLES = []; STEPS.forEach(st => (st.groups || []).forEach(g => g.f.forEach(f => { if (f.path && f.u === 'm' && typeof get(R, f.path) === 'number') CIBLES.push({ path: f.path, label: `${st.t} › ${g.h} › ${f.label}` }); })));
+  let CIBLES = [];
+  function majCibles() {
+    CIBLES = []; STEPS.forEach(st => (st.groups || []).forEach(g => g.f.forEach(f => { if (f.path && f.u === 'm' && typeof get(R, f.path) === 'number') CIBLES.push({ path: f.path, label: `${st.t} › ${g.h} › ${f.label}` }); })));
+    plafondsCfg().forEach((e, k) => [['hauteur_naissance_m', 'naissance'], ['hauteur_cle_m', 'clé']].forEach(([key, lab]) =>
+      CIBLES.push({ path: MU.concat('plafonds', k, key), label: `Murs et plafonds › Plafonds voûtés › ${e.nom || 'Voûte ' + (k + 1)}, ${lab}` })));
+  }
+  majCibles();
   function elevSheet() { return ELEV[EV.i]; }
   function elevFit() { const sh = elevSheet(), r = ecv.getBoundingClientRect(); if (!sh || !r.width) return;
     EV.k = Math.min(r.width / sh.largeur_pt, r.height / sh.hauteur_pt) * 0.96; EV.ox = (r.width - sh.largeur_pt * EV.k) / 2; EV.oy = (r.height - sh.hauteur_pt * EV.k) / 2; }
@@ -1222,6 +1326,7 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
     EV.ox = sx - (sx - EV.ox) * f; EV.oy = sy - (sy - EV.oy) * f; EV.k *= f; elevDraw(); }, { passive: false });
   window.addEventListener('resize', () => { if (!elevView.hidden) elevDraw(); });
   function renderElev() {
+    majCibles();
     const g1 = document.createElement('div'); g1.className = 'group'; g1.innerHTML = '<h3>Planches</h3>';
     if (!ELEV.length) g1.insertAdjacentHTML('beforeend', '<p class="note">Aucune élévation trouvée. Placez vos élévations et coupes sur un plan de travail à part dans Illustrator, ou sur des calques dont vous indiquez le début du nom ci-dessous, puis validez les modifications.</p>');
     else { const row = document.createElement('div'); row.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap';
@@ -1283,6 +1388,7 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
     groupsEl.innerHTML = '';
     if (s.zones) renderZones();
     if (s.lintels) renderLintels();
+    if (s.plafonds) renderPlafonds();
     if (s.rooms) renderRooms();
     if (s.sol) renderSol();
     if (s.elev) renderElev();
