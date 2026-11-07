@@ -112,6 +112,15 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
 .drawbar .snapt { display: inline-flex; gap: 5px; align-items: center; font-size: 12px; color: var(--muted); margin-left: auto; }
 .drawbar .snapt input { accent-color: var(--accent); }
 .drawbar[hidden], .drawbar [hidden], .tag[hidden] { display: none; }
+/* élévations : planche mesurable */
+.elevview { position: absolute; inset: 0; z-index: 4; background: var(--raise); display: grid; grid-template-rows: auto minmax(0, 1fr); }
+.elevview[hidden] { display: none; }
+.elevview .ebar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 10px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+.elevview canvas { width: 100%; height: 100%; display: block; cursor: crosshair; touch-action: none; }
+.mesure { font: 13px var(--mono); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; display: grid; gap: 2px; }
+.mesure b { font-family: var(--sans); font-weight: 600; }
+.mlist { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 12px; }
+.mlist li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; align-items: center; }
 /* déplacer un élément */
 .movebox { position: absolute; right: 10px; top: 10px; width: 300px; max-width: calc(100% - 20px); background: var(--raise); border: 1px solid var(--line); border-radius: 8px;
   padding: 10px 12px; display: grid; gap: 8px; font-size: 13px; box-shadow: 0 4px 16px rgba(0,0,0,.12); z-index: 3; }
@@ -186,6 +195,7 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
       <div id="tags"></div>
       <div class="drawbar" id="drawbar" hidden><span id="drawmsg"></span><label class="snapt"><input type="checkbox" id="snap" checked> Accroche aux murs</label><button class="btn" id="draw-ok">Terminer</button><button class="btn ghost" id="draw-cancel">Annuler</button></div>
       <div class="movebox" id="movebox" hidden></div>
+      <div class="elevview" id="elevview" hidden><div class="ebar"><span id="elevmsg">Cliquez deux points pour mesurer.</span></div><canvas id="elevcv"></canvas></div>
     </div>
     <div class="tools">
       <div><span class="lab">Niveau</span><span class="seg" role="group" aria-label="Niveau affiché">
@@ -205,6 +215,7 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
 
 <script type="application/json" id="reglages">__REGLAGES__</script>
 <script type="application/json" id="pieces">__PIECES__</script>
+<script type="application/json" id="elevations">__ELEVATIONS__</script>
 <script type="application/octet-stream" id="glb">__GLB__</script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.147.0/build/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/loaders/GLTFLoader.js"></script>
@@ -242,6 +253,9 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
           F(I.concat('niveaux', 0, 'nom'), 'Page 1', { type: 'text', src: 'plan' }),
           F(I.concat('niveaux', 1, 'nom'), 'Page 2', { type: 'text', src: 'plan' }),
           F(I.concat('alignement_niveaux', 'methode'), 'Calage des niveaux', { type: 'select', opts: [['axe_escalier_helicoidal', 'Axe du colimaçon'], ['repere', 'Repère commun'], ['manuel', 'Décalage manuel']], src: 'check', note: 'Les deux pages sont décalées de 1,11 m sur le fichier.' }) ] } ] },
+    { id: 'elevations', t: 'Élévations', s: 'Mesurer les hauteurs',
+      d: 'Les élévations et coupes du fichier Illustrator s’affichent à l’échelle. Cliquez deux points pour mesurer une hauteur ou une largeur, puis appliquez la mesure au réglage voulu.',
+      elev: true },
     { id: 'pieces', t: 'Pièces', s: 'Nommer, découper, dessiner',
       d: 'Les pièces sont trouvées sur le plan (murs, portes, passages, marches). Nommez-les, donnez leur type, coupez un espace ouvert ou dessinez une pièce à la main.',
       rooms: true,
@@ -902,7 +916,7 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
     stepsEl.innerHTML = '';
     STEPS.forEach((s, i) => {
       const li = document.createElement('li'), b = document.createElement('button');
-      const nwarn = (s.groups || []).reduce((a, g) => a + g.f.filter(f => f.warn).length, 0);
+      const nwarn = (s.groups || []).reduce((a, g) => a + g.f.filter(f => f.warn && !(f.path && luElev(f.path))).length, 0);
       b.innerHTML = `<span class="n">${i + 1}</span><span class="t">${s.t}</span><span class="s${nwarn ? ' warn' : ''}">${nwarn ? nwarn + ' point' + (nwarn > 1 ? 's' : '') + ' à vérifier' : s.s}</span>`;
       if (s.id === current) b.setAttribute('aria-current', 'step');
       b.addEventListener('click', () => goStep(s.id));
@@ -927,8 +941,9 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
     if (f.type === 'range') { out = document.createElement('output'); out.className = 'num'; out.htmlFor = id; out.textContent = (val > 0 ? '+' : '') + val + '°'; ctl.appendChild(out); }
     else if (f.u) { const u = document.createElement('span'); u.className = 'u'; u.textContent = f.u; ctl.appendChild(u); }
     const chips = [];
-    if (f.src) chips.push(`<span class="chip ${SRC[f.src][0]}">${SRC[f.src][1]}</span>`);
-    if (f.warn && f.src !== 'check') chips.push('<span class="chip check">à vérifier</span>');
+    if (f.path && luElev(f.path)) chips.push('<span class="chip plan">lu sur l’élévation</span>');
+    else if (f.src) chips.push(`<span class="chip ${SRC[f.src][0]}">${SRC[f.src][1]}</span>`);
+    if (f.warn && f.src !== 'check' && !(f.path && luElev(f.path))) chips.push('<span class="chip check">à vérifier</span>');
     if (f.live) chips.push('<span class="chip live">aperçu en direct</span>');
     if (chips.length || f.note) { const s = document.createElement('div'); s.className = 'src'; s.innerHTML = chips.join('') + (f.note ? `<span class="note">${f.note}</span>` : ''); row.appendChild(s); }
     const mark = () => row.classList.toggle('changed', !!f.path && !same(get(R, f.path), get(ORIG, f.path)));
@@ -1153,6 +1168,108 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
     g.appendChild(ul2);
     groupsEl.appendChild(g);
   }
+  // ---------- élévations : mesurer sur les planches du fichier Illustrator et appliquer à un réglage ----------
+  let ELEV = []; try { ELEV = JSON.parse(document.getElementById('elevations').textContent) || []; } catch (e) { ELEV = []; }
+  const elevView = document.getElementById('elevview'), ecv = document.getElementById('elevcv'), emsg = document.getElementById('elevmsg');
+  const EV = { i: 0, k: 0, ox: 0, oy: 0, p: [], hover: null, aimant: true, img: null, imgOf: -1, val: 'h', cible: '' };
+  const EP = I.concat('elevations');
+  const mesuresR = () => (get(R, EP) || {}).mesures || [];
+  const fmtM = v => v.toFixed(2).replace('.', ',') + ' m';
+  const CIBLES = []; STEPS.forEach(st => (st.groups || []).forEach(g => g.f.forEach(f => { if (f.path && f.u === 'm' && typeof get(R, f.path) === 'number') CIBLES.push({ path: f.path, label: `${st.t} › ${g.h} › ${f.label}` }); })));
+  function elevSheet() { return ELEV[EV.i]; }
+  function elevFit() { const sh = elevSheet(), r = ecv.getBoundingClientRect(); if (!sh || !r.width) return;
+    EV.k = Math.min(r.width / sh.largeur_pt, r.height / sh.hauteur_pt) * 0.96; EV.ox = (r.width - sh.largeur_pt * EV.k) / 2; EV.oy = (r.height - sh.hauteur_pt * EV.k) / 2; }
+  function elevDraw() {
+    const sh = elevSheet(), r = ecv.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+    if (!r.width) return; ecv.width = r.width * dpr; ecv.height = r.height * dpr;
+    const c = ecv.getContext('2d'); c.setTransform(dpr, 0, 0, dpr, 0, 0); c.fillStyle = css('--raise') || '#fff'; c.fillRect(0, 0, r.width, r.height);
+    if (!sh) { emsg.textContent = 'Aucune élévation dans ce fichier.'; return; }
+    if (EV.imgOf !== EV.i) { EV.img = new Image(); EV.img.onload = () => elevDraw(); EV.img.src = sh.image; EV.imgOf = EV.i; EV.k = 0; }
+    if (!EV.k) elevFit();
+    if (EV.img.complete && EV.img.naturalWidth) c.drawImage(EV.img, EV.ox, EV.oy, sh.largeur_pt * EV.k, sh.hauteur_pt * EV.k);
+    const S_ = q => [EV.ox + q[0] * EV.k, EV.oy + q[1] * EV.k], acc = css('--accent') || '#2f6b55';
+    mesuresR().filter(m => m.page === sh.page).forEach(m => { const a = S_(m.de_pt), b = S_(m.a_pt); c.strokeStyle = 'rgba(163,57,43,.55)'; c.lineWidth = 1.5; c.beginPath(); c.moveTo(...a); c.lineTo(...b); c.stroke(); });
+    if (EV.p.length) { const a = S_(EV.p[0]), b = S_(EV.p[1] || EV.hover || EV.p[0]);
+      c.strokeStyle = acc; c.lineWidth = 2; c.beginPath(); c.moveTo(...a); c.lineTo(...b); c.stroke();
+      [a, b].forEach(q => { c.beginPath(); c.arc(q[0], q[1], 4, 0, 7); c.fillStyle = acc; c.fill(); }); }
+    if (EV.hover && EV.hover.snap) { const q = S_(EV.hover); c.strokeStyle = acc; c.lineWidth = 1.5; c.strokeRect(q[0] - 5, q[1] - 5, 10, 10); }
+  }
+  function elevPick(e) {
+    const r = ecv.getBoundingClientRect(), sx = e.clientX - r.left, sy = e.clientY - r.top, sh = elevSheet();
+    let q = [(sx - EV.ox) / EV.k, (sy - EV.oy) / EV.k], snap = false;
+    if (EV.aimant && sh) { let best = 10 / EV.k, bq = null; const P_ = sh.points;
+      for (let j = 0; j < P_.length; j += 2) { const d = Math.hypot(P_[j] - q[0], P_[j + 1] - q[1]); if (d < best) { best = d; bq = [P_[j], P_[j + 1]]; } }
+      if (bq) { q = bq; snap = true; } }
+    if (e.shiftKey && EV.p.length === 1) { const a = EV.p[0]; if (Math.abs(q[0] - a[0]) < Math.abs(q[1] - a[1])) q = [a[0], q[1]]; else q = [q[0], a[1]]; }
+    q.snap = snap; return q;
+  }
+  function elevValeurs() { if (EV.p.length < 2) return null; const sh = elevSheet(), [a, b] = EV.p, m = sh.m_par_pt;
+    return { h: Math.abs(b[1] - a[1]) * m, w: Math.abs(b[0] - a[0]) * m, d: Math.hypot(b[0] - a[0], b[1] - a[1]) * m }; }
+  let edrag = null;
+  ecv.addEventListener('pointerdown', e => { edrag = { x: e.clientX, y: e.clientY, ox: EV.ox, oy: EV.oy, moved: false }; ecv.setPointerCapture(e.pointerId); });
+  ecv.addEventListener('pointermove', e => {
+    if (edrag && (edrag.moved || Math.hypot(e.clientX - edrag.x, e.clientY - edrag.y) > 4)) { edrag.moved = true; EV.ox = edrag.ox + e.clientX - edrag.x; EV.oy = edrag.oy + e.clientY - edrag.y; elevDraw(); return; }
+    if (!elevSheet()) return; EV.hover = elevPick(e); elevDraw(); });
+  ecv.addEventListener('pointerup', e => { const d = edrag; edrag = null; if (!d || d.moved || !elevSheet()) return;
+    const q = elevPick(e); if (EV.p.length >= 2) EV.p = []; EV.p.push(q); elevDraw(); render(); });
+  ecv.addEventListener('wheel', e => { e.preventDefault(); const r = ecv.getBoundingClientRect(), sx = e.clientX - r.left, sy = e.clientY - r.top, f = Math.exp(-e.deltaY * 0.0015);
+    EV.ox = sx - (sx - EV.ox) * f; EV.oy = sy - (sy - EV.oy) * f; EV.k *= f; elevDraw(); }, { passive: false });
+  window.addEventListener('resize', () => { if (!elevView.hidden) elevDraw(); });
+  function renderElev() {
+    const g1 = document.createElement('div'); g1.className = 'group'; g1.innerHTML = '<h3>Planches</h3>';
+    if (!ELEV.length) g1.insertAdjacentHTML('beforeend', '<p class="note">Aucune élévation trouvée. Placez vos élévations et coupes sur un plan de travail à part dans Illustrator, ou sur des calques dont vous indiquez le début du nom ci-dessous, puis validez les modifications.</p>');
+    else { const row = document.createElement('div'); row.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap';
+      ELEV.forEach((sh, i) => { const b = document.createElement('button'); b.className = 'btn' + (i === EV.i ? '' : ' ghost'); b.textContent = sh.nom;
+        b.addEventListener('click', () => { EV.i = i; EV.p = []; render(); }); row.appendChild(b); });
+      const fit = document.createElement('button'); fit.className = 'btn ghost'; fit.textContent = 'Recadrer'; fit.addEventListener('click', () => { elevFit(); elevDraw(); }); row.appendChild(fit);
+      g1.appendChild(row); }
+    const cfg = get(R, EP) || {};
+    const lien = (lab, key, note) => { const r_ = document.createElement('div'); r_.className = 'field';
+      r_.innerHTML = `<label>${lab}</label><div class="ctl"><input type="text" spellcheck="false"></div><div class="src"><span class="note">${note}</span></div>`;
+      const inp = r_.querySelector('input'); inp.value = (cfg[key] || []).join(', ');
+      inp.addEventListener('change', () => { const e_ = ensureElev(); const v = inp.value.split(',').map(x => x.trim()).filter(Boolean);
+        e_[key] = key === 'pages' ? v.map(Number).filter(n => n > 0) : v; updCount(); }); return r_; };
+    g1.appendChild(lien('Pages d’élévation', 'pages', 'Numéros des plans de travail. Vide : toutes les pages qui ne sont pas un niveau.'));
+    g1.appendChild(lien('Calques d’élévation', 'calques', 'Début du nom, par exemple « Élévation ». Vide : tout ce qui est sur ces pages.'));
+    groupsEl.appendChild(g1);
+    if (!ELEV.length) return;
+    const g2 = document.createElement('div'); g2.className = 'group'; g2.innerHTML = '<h3>Mesure</h3>';
+    const ai = document.createElement('label'); ai.className = 'note'; ai.style.cssText = 'display:flex;gap:6px;align-items:center';
+    ai.innerHTML = '<input type="checkbox"> Magnétisme : accroche aux traits du dessin'; const aic = ai.querySelector('input'); aic.checked = EV.aimant;
+    aic.addEventListener('change', () => { EV.aimant = aic.checked; }); g2.appendChild(ai);
+    g2.insertAdjacentHTML('beforeend', '<p class="note" style="margin:0">Clic : premier puis second point. Maj : mesure bien verticale ou horizontale. Molette : zoom. Glisser : déplacer la planche.</p>');
+    const v = elevValeurs();
+    if (!v) g2.insertAdjacentHTML('beforeend', `<div class="mesure">${EV.p.length ? 'Cliquez le second point.' : 'Cliquez le premier point (par exemple le sol).'}</div>`);
+    else {
+      const ms = document.createElement('div'); ms.className = 'mesure';
+      ms.innerHTML = `<span><b>Hauteur</b> ${fmtM(v.h)}</span><span><b>Largeur</b> ${fmtM(v.w)}</span><span><b>Longueur</b> ${fmtM(v.d)}</span>`; g2.appendChild(ms);
+      const f1 = document.createElement('div'); f1.className = 'field'; f1.innerHTML = '<label for="elev-val">Valeur</label><div class="ctl"><select id="elev-val"><option value="h">Hauteur</option><option value="w">Largeur</option><option value="d">Longueur</option></select></div>';
+      const sv = f1.querySelector('select'); sv.value = EV.val; sv.addEventListener('change', () => { EV.val = sv.value; }); g2.appendChild(f1);
+      const f2 = document.createElement('div'); f2.className = 'field'; f2.innerHTML = '<label for="elev-cible">Appliquer à</label><div class="ctl"><select id="elev-cible"><option value="">Choisir un réglage…</option></select></div>';
+      const sc = f2.querySelector('select'); CIBLES.forEach(c_ => { const o = document.createElement('option'); o.value = c_.path.join('|'); o.textContent = `${c_.label} (${fmtM(get(R, c_.path))})`; sc.appendChild(o); });
+      sc.value = EV.cible; sc.addEventListener('change', () => { EV.cible = sc.value; }); g2.appendChild(f2);
+      const b = document.createElement('button'); b.className = 'btn'; b.textContent = 'Appliquer la mesure';
+      b.addEventListener('click', () => {
+        if (!EV.cible) { emsg.textContent = 'Choisissez d’abord le réglage à remplir.'; sc.focus(); return; }
+        const c_ = CIBLES.find(x => x.path.join('|') === EV.cible), val = Math.round(elevValeurs()[EV.val] * 200) / 200, avant = get(R, c_.path);
+        set(R, c_.path, val);
+        ensureElev().mesures.push({ cible: c_.path, libelle: c_.label, valeur_m: val, avant_m: avant, page: elevSheet().page, de_pt: EV.p[0].slice(0, 2), a_pt: EV.p[1].slice(0, 2) });
+        emsg.textContent = `${c_.label} : ${fmtM(avant)} → ${fmtM(val)}`; EV.p = []; updCount(); render(); });
+      g2.appendChild(b);
+    }
+    groupsEl.appendChild(g2);
+    const ml = mesuresR();
+    if (ml.length) { const g3 = document.createElement('div'); g3.className = 'group'; g3.innerHTML = '<h3>Mesures appliquées</h3>';
+      const ul = document.createElement('ul'); ul.className = 'mlist';
+      ml.forEach((m, i) => { const li = document.createElement('li'); li.innerHTML = `<span>${escH(m.libelle)} : <b>${fmtM(m.valeur_m)}</b> <span class="note">(planche ${m.page}, avant ${fmtM(m.avant_m)})</span></span>`;
+        const x = document.createElement('button'); x.className = 'btn ghost'; x.textContent = 'Annuler';
+        x.addEventListener('click', () => { if (same(get(R, m.cible), m.valeur_m)) set(R, m.cible, m.avant_m); ensureElev().mesures.splice(i, 1); updCount(); render(); });
+        li.appendChild(x); ul.appendChild(li); });
+      g3.appendChild(ul); groupsEl.appendChild(g3); }
+  }
+  function ensureElev() { const imp = get(R, I); imp.elevations = imp.elevations || {}; const e = imp.elevations; e.pages = e.pages || []; e.calques = e.calques || []; e.mesures = e.mesures || []; return e; }
+  const luElev = path => mesuresR().some(m => same(m.cible, path) && same(get(R, path), m.valeur_m));
+
   function render() {
     renderSteps();
     const s = STEPS.find(x => x.id === current);
@@ -1162,6 +1279,8 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
     if (s.lintels) renderLintels();
     if (s.rooms) renderRooms();
     if (s.sol) renderSol();
+    if (s.elev) renderElev();
+    elevView.hidden = current !== 'elevations'; if (!elevView.hidden) elevDraw();
     (s.groups || []).forEach(g => { const d = document.createElement('div'); d.className = 'group'; d.innerHTML = `<h3>${g.h}</h3>`; g.f.forEach(f => d.appendChild(field(f))); groupsEl.appendChild(d); });
     if (s.checks) {
       const d = document.createElement('div'); d.className = 'group';

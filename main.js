@@ -115,6 +115,7 @@ function assemblerEditeur() {
     .replace('__TAILLE__', (glb.length / 1e6).toFixed(1).replace('.', ',') + ' Mo')
     .replace('__PIECES__', () => esc(fs.readFileSync(sortie('maquette.pieces.json'), 'utf-8')))
     .replace('__REGLAGES__', () => esc(fs.readFileSync(path.join(projet.dossier, 'reglages.json'), 'utf-8')))
+    .replace('__ELEVATIONS__', () => { try { return esc(fs.readFileSync(sortie('maquette.elevations.json'), 'utf-8')); } catch { return '[]'; } })
     .replace('__AXE__', () => fs.readFileSync(sortie('maquette.axe.json'), 'utf-8'))
     .replace('__GLB__', () => glb.toString('base64'));
   const f = path.join(app.getPath('userData'), 'editeur.html');

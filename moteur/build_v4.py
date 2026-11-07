@@ -496,6 +496,8 @@ def main(src, dst, cfg='reglages.json'):
         lp = g.representative_point(); r['centre'] = [round(lp.x - c[0], 3), round(-lp.y - c[2], 3)]
         out['pieces'].append(r)
     json.dump(out, open(dst.rsplit('.', 1)[0] + '.pieces.json', 'w'), ensure_ascii=False)
+    import elevations as EL      # planches d'elevation et de coupe, mesurables dans l'editeur
+    EL.exporter(doc, niveaux, imp.get('elevations'), M, dst.rsplit('.', 1)[0] + '.elevations.json')
 
 
 if __name__ == '__main__': main(*sys.argv[1:4])
