@@ -59,7 +59,16 @@ def main(src, dst, cfg='reglages.json'):
     CEIL = [n['hauteur_sous_plafond_m'] for n in niveaux]
 
     doc = pymupdf.open(src)
+    if any('without PDF Content' in pg.get_text() for pg in doc):
+        sys.exit("ERREUR : ce fichier Illustrator a ete enregistre sans contenu PDF. Dans Illustrator : Fichier > Enregistrer sous, "
+                 "format Adobe Illustrator, puis cochez « Creer un fichier compatible PDF » et enregistrez.")
+    if len(doc) < max(n['page'] for n in niveaux):
+        sys.exit(f"ERREUR : le plan a {len(doc)} page(s) (plans de travail), il en faut {max(n['page'] for n in niveaux)} pour les niveaux reglés.")
     pages = [doc[n['page'] - 1] for n in niveaux]
+    calques_doc = sorted({d.get('layer', '') for pg in pages for d in pg.get_drawings()} - {''})
+    print('  calques du plan :', ', '.join(calques_doc))
+    if not any(c.startswith(cal['murs']) for c in calques_doc):
+        sys.exit(f"ERREUR : aucun calque « {cal['murs']} » sur les pages des niveaux. Calques trouves : {', '.join(calques_doc) or 'aucun'}.")
     centers = [S.spiral_center(p, cal['escalier_helicoidal']) for p in pages]
     al = imp['alignement_niveaux']
     if al.get('decalage_manuel_m'):
