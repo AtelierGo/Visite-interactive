@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('atelier', {
   // accueil
   accueil: () => ipcRenderer.invoke('accueil'),
   ouvrir: dossier => ipcRenderer.invoke('ouvrir', dossier),
+  supprimer: dossier => ipcRenderer.invoke('supprimer', dossier),
   nouveau: nom => ipcRenderer.invoke('nouveau', nom),
   parametres: p => ipcRenderer.invoke('parametres', p),
   choisirFichier: titre => ipcRenderer.invoke('choisir-fichier', titre),

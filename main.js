@@ -249,6 +249,20 @@ ipcMain.on('etat', e => { e.returnValue = projet ? etat() : ''; });
 ipcMain.on('modifie', (_e, n) => { modifications = n; });
 ipcMain.handle('accueil', () => ({ recents: config().recents.filter(d => fs.existsSync(path.join(d, 'projet.json'))).map(d => { try { return lireProjet(d); } catch { return null; } }).filter(Boolean),
   python: verifierPython(), config: config(), exemple: fs.existsSync(path.join(EXEMPLE, 'reglages.json')) }));
+ipcMain.handle('supprimer', async (_e, dossier) => {    // accueil : retirer un projet de la liste, ou le mettre à la corbeille (récupérable)
+  let nom = path.basename(dossier); try { nom = lireProjet(dossier).nom; } catch {}
+  const r = await dialog.showMessageBox(win, { type: 'warning', message: `Supprimer le projet « ${nom} » ?`,
+    detail: `${dossier}\n\n« Mettre à la corbeille » déplace tout le dossier du projet (plan, réglages, maquette) dans la corbeille : vous pouvez encore le récupérer. « Retirer de la liste » laisse le dossier intact.`,
+    buttons: ['Mettre à la corbeille', 'Retirer de la liste', 'Annuler'], defaultId: 2, cancelId: 2 });
+  if (r.response === 2) return { ok: false };
+  if (r.response === 0) {
+    if (!fs.existsSync(path.join(dossier, 'projet.json')) || path.resolve(dossier).startsWith(path.resolve(RACINE))) {
+      dialog.showMessageBox(win, { type: 'warning', message: 'Ce dossier n’est pas un projet supprimable.' }); return { ok: false }; }
+    try { await shell.trashItem(dossier); } catch (e) { dialog.showMessageBox(win, { type: 'error', message: 'Impossible de mettre le projet à la corbeille.', detail: String(e.message || e) }); return { ok: false }; }
+  }
+  const p = lireParams(); p.recents = (p.recents || []).filter(d => d !== dossier); ecrireParams(p);
+  return { ok: true, corbeille: r.response === 0 };
+});
 ipcMain.handle('ouvrir', (_e, d) => d ? ouvrirProjet(d) : choisirEtOuvrir());
 ipcMain.handle('nouveau', (_e, nom) => nouveauProjet(nom));
 ipcMain.handle('parametres', (_e, p) => { const cur = lireParams();
