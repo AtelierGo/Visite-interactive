@@ -55,7 +55,9 @@ def main(src, dst, cfg='reglages.json'):
     # niveaux empiles dans l'ordre de la liste, le premier a z = 0, les suivants en dessous
     # (TODO editeur : choisir pour chaque niveau s'il est au-dessus ou en dessous du precedent)
     Z = [0.0]
-    for n in niveaux[1:]: Z.append(Z[-1] - (n['hauteur_sous_plafond_m'] + SLAB))
+    for k, n in enumerate(niveaux[1:], 1):     # position : 'dessous' (sous-sol, defaut historique) ou 'dessus' (etage)
+        if n.get('position', 'dessous') == 'dessus': Z.append(Z[-1] + niveaux[k - 1]['hauteur_sous_plafond_m'] + SLAB)
+        else: Z.append(Z[-1] - (n['hauteur_sous_plafond_m'] + SLAB))
     CEIL = [n['hauteur_sous_plafond_m'] for n in niveaux]
 
     doc = pymupdf.open(src)
@@ -69,12 +71,20 @@ def main(src, dst, cfg='reglages.json'):
     print('  calques du plan :', ', '.join(calques_doc))
     if not any(c.startswith(cal['murs']) for c in calques_doc):
         sys.exit(f"ERREUR : aucun calque « {cal['murs']} » sur les pages des niveaux. Calques trouves : {', '.join(calques_doc) or 'aucun'}.")
-    centers = [S.spiral_center(p, cal['escalier_helicoidal']) for p in pages]
-    al = imp['alignement_niveaux']
+    hel = esc.get('escalier_helicoidal')
+    def centre_ou_rien(p):
+        try: return S.spiral_center(p, cal['escalier_helicoidal'])
+        except ValueError: return (None, 0)      # pas d'escalier helicoidal sur cette page
+    centers = [centre_ou_rien(p) for p in pages]
+    al = imp.get('alignement_niveaux', {})
     if al.get('decalage_manuel_m'):
         shift = [(0, 0)] + [(dx / M, -dy / M) for dx, dy in al['decalage_manuel_m']]
-    else:   # caler chaque niveau sur l'axe de l'escalier helicoidal du premier
-        c0 = centers[0][0]; shift = [(c0[0] - c[0][0], c0[1] - c[0][1]) for c in centers]
+    elif al.get('methode', 'axe_escalier_helicoidal') == 'axe_escalier_helicoidal' and all(c[0] for c in centers):
+        c0 = centers[0][0]; shift = [(c0[0] - c[0][0], c0[1] - c[0][1]) for c in centers]    # caler chaque niveau sur l'axe du colimacon du premier
+    else:
+        if len(pages) > 1 and al.get('methode', 'axe_escalier_helicoidal') == 'axe_escalier_helicoidal':
+            print('ATTENTION : axe du colimacon introuvable sur une page, niveaux superposes sans decalage')
+        shift = [(0, 0)] * len(pages)
     for i, s in enumerate(shift[1:], 1):
         print('decalage %s -> %s : %.2f m, %.2f m' % (niveaux[i]['nom'], niveaux[0]['nom'], s[0] * M, s[1] * M))
 
@@ -94,10 +104,14 @@ def main(src, dst, cfg='reglages.json'):
                 porte=pbr('portes', mat['portes']), lum=pbr('luminaires', mat['luminaires']), rail=pbr('rails', mat['rails']), placard=pbr('placards', mat['placards']), chassis=pbr('chassis', mat['chassis']), verre=pbr('verre', mat['verre'], blend=True),
                 bois=pbr('bois', mat['bois']), acier=pbr('acier', mat['acier']), tole=pbr('tole perforee', mat['tole_perforee'], blend=True))
 
-    hel = esc['escalier_helicoidal']
-    lo, hi = by_name[hel['niveau_bas']], by_name[hel['niveau_haut']]
-    spiral_xy = S.pt(*centers[hi][0], *shift[hi]); Rsp = centers[hi][1] * M * hel['rayon_facteur']
-    tremie = Point(spiral_xy).buffer(Rsp + hel['tremie_marge_m'], 64)
+    lo = hi = None; spiral_xy = None; tremie = P.Polygon()
+    if hel and hel.get('niveau_bas') in by_name and hel.get('niveau_haut') in by_name:
+        lo, hi = by_name[hel['niveau_bas']], by_name[hel['niveau_haut']]
+        if centers[hi][0] is None or lo == hi:
+            print('ATTENTION : escalier helicoidal introuvable sur', hel['niveau_haut']); lo = hi = None
+        else:
+            spiral_xy = S.pt(*centers[hi][0], *shift[hi]); Rsp = centers[hi][1] * M * hel['rayon_facteur']
+            tremie = Point(spiral_xy).buffer(Rsp + hel['tremie_marge_m'], 64)
 
     scene = trimesh.Scene()
     def add(name, mesh, m, uv=None, box_uv=False):
@@ -144,13 +158,13 @@ def main(src, dst, cfg='reglages.json'):
         n = f'niveau{i}'
         # linteaux ajustes : relier les deux murs de part et d'autre de l'ouverture (meme epaisseur que les murs)
         extra_lintels = []     # linteaux traces a la main sur une ouverture sans porte : (forme, hauteur du dessous)
-        for la in [x for x in murs.get('linteaux_traces', []) if by_name[x['niveau']] == i]:
+        for la in [x for x in murs.get('linteaux_traces', []) if by_name.get(x['niveau'], -1) == i]:
             zone = LineString([S.pt(x, y, dx, dy) for x, y in la['ligne_plan_pt']]).buffer(la.get('rayon_recherche_m', 0.35))
             hull = unary_union(P.polys(W.intersection(zone))).convex_hull.difference(W).buffer(-0.01).buffer(0.01)
             lintels = lintels.difference(zone)
             extra_lintels.append((hull, la.get('hauteur_dessous_m', LINTEL)))
             print(f"  linteau trace : {la['nom']} ({hull.area:.2f} m2, dessous a {la.get('hauteur_dessous_m', LINTEL):.2f} m)")
-        for la in [x for x in murs.get('linteaux_ajustes', []) if by_name[x['niveau']] == i]:
+        for la in [x for x in murs.get('linteaux_ajustes', []) if by_name.get(x['niveau'], -1) == i]:
             q = Point(*la['porte_plan_pt'])
             rr = next((dd['rect'] for dd in page.get_drawings() if dd.get('layer', '').startswith(cal['portes'][:5])
                        and dd['rect'].x0 - 1 <= q.x <= dd['rect'].x1 + 1 and dd['rect'].y0 - 1 <= q.y <= dd['rect'].y1 + 1), None)
@@ -173,7 +187,7 @@ def main(src, dst, cfg='reglages.json'):
         door_shift, alleges, garde = {}, [], set()
         # charniere et angle de chaque vantail : 0 deg = porte fermee (dans l'axe de son ouverture), angle du plan = a0
         baies_c = []
-        for v in [v for v in esc.get('vitrines', []) if by_name[v['niveau']] == i]:
+        for v in [v for v in esc.get('vitrines', []) if by_name.get(v['niveau'], -1) == i]:
             p0_, p1_ = S.pt(*v['de_plan_pt'], dx, dy), S.pt(*v['a_plan_pt'], dx, dy); L_ = math.dist(p0_, p1_)
             for a_, b_ in v.get('baies_porte_u_m', []):
                 u_ = (a_ + b_) / 2; baies_c.append(Point(p0_[0] + (p1_[0] - p0_[0]) * u_ / L_, p0_[1] + (p1_[1] - p0_[1]) * u_ / L_))
@@ -246,7 +260,7 @@ def main(src, dst, cfg='reglages.json'):
         walls_out.append([r_ for p_ in P.polys(W.simplify(0.005)) for r_ in [p_.exterior] + list(p_.interiors)])   # pour l'accroche de l'editeur
         # zones exclues (etape import) : rien n'y est genere, ni murs, ni sol, ni equipements
         EX = unary_union([P.Polygon([S.pt(x, y, dx, dy) for x, y in z_['polygone_plan_pt']]).buffer(0)
-                          for z_ in imp.get('zones_exclues', []) if by_name[z_['niveau']] == i and len(z_['polygone_plan_pt']) >= 3])
+                          for z_ in imp.get('zones_exclues', []) if by_name.get(z_['niveau'], -1) == i and len(z_['polygone_plan_pt']) >= 3])
         if not EX.is_empty:
             W, lintels, outline = W.difference(EX), lintels.difference(EX), outline.difference(EX)
             print(f"  zones exclues : {EX.area:.1f} m2")
@@ -261,7 +275,7 @@ def main(src, dst, cfg='reglages.json'):
         # zones de sol a hauteur constante : [sol, plinthes, hauteur]. Chaque marche releve la partie qui touche sa ligne, cote haut,
         # a partir de la hauteur de la zone ou elle se trouve (les marches successives se cumulent)
         regions = [[floor, plinth, 0.0]]
-        for ch in [c for c in murs['changements_de_niveau'] if by_name[c['niveau']] == i]:
+        for ch in [c for c in murs.get('changements_de_niveau', []) if by_name.get(c['niveau'], -1) == i]:
             dz = delta_of(ch)
             N = max(1, int(ch.get('marches', 1))) if ch.get('mode', 'marches') == 'marches' else 1
             hstep = dz / N
@@ -314,10 +328,10 @@ def main(src, dst, cfg='reglages.json'):
         # pieces : detection automatique + pieces et separations dessinees a la main
         to_model = lambda x, y, dx=dx, dy=dy: S.pt(x, y, dx, dy)
         prs = PI.door_rects(page, [cal['portes'], cal.get('portes_coulissantes', 'Porte coulissante')], M, mv)
-        steps_l = [c['ligne_plan_pt'] for c in murs['changements_de_niveau'] if by_name[c['niveau']] == i]
+        steps_l = [c['ligne_plan_pt'] for c in murs.get('changements_de_niveau', []) if by_name.get(c['niveau'], -1) == i]
         rooms = PI.detect(W0 if EX.is_empty else W0.difference(EX), floor, prs, pcfg_p, niveaux[i]['nom'], to_model, steps_l)
-        for ci, ch in enumerate(murs['changements_de_niveau']):    # pieces de part et d'autre de chaque marche, pour l'editeur
-            if by_name[ch['niveau']] != i: continue
+        for ci, ch in enumerate(murs.get('changements_de_niveau', [])):    # pieces de part et d'autre de chaque marche, pour l'editeur
+            if by_name.get(ch['niveau'], -1) != i: continue
             Lp = LineString([S.pt(x, y, dx, dy) for x, y in ch['ligne_plan_pt']]); mid = Lp.interpolate(0.5, normalized=True)
             hp0 = half_plane(ch['ligne_plan_pt'], ch['cote_qui_monte'], dx, dy)
             def near(up, mid=mid, hp0=hp0):
@@ -349,7 +363,7 @@ def main(src, dst, cfg='reglages.json'):
         add(f'{n}_sol', solid([m2 for f_, z0, h in sols for m2 in P.extrude(f_.difference(done), z0, h, None)]), mats['sol'], uv=sol)
         add(f'{n}_plinthes', solid(plin), mats['plinthes'])
         add(f'{n}_dalle', solid(P.extrude(outline, z - SLAB, SLAB - 0.02, None)), mats['dalle'])
-        for pf in [p for p in murs.get('plafonds', []) if by_name[p['niveau']] == i and p['forme'] == 'voute_berceau']:
+        for pf in [p for p in murs.get('plafonds', []) if by_name.get(p['niveau'], -1) == i and p['forme'] == 'voute_berceau']:
             k = pf.get('detection_pieces_fermeture_m', 1.5)
             sealed = W.buffer(k, join_style='mitre').buffer(-k, join_style='mitre')
             pt0 = Point(S.pt(*pf['piece_plan_pt'], dx, dy))
@@ -360,7 +374,7 @@ def main(src, dst, cfg='reglages.json'):
             add(f'{n}_voute', vb.mesh(z, tremie if i == lo and lo != hi else None), mats['voute'])
             print(f"  {pf['nom']} : portee {2 * vb.a:.2f} m, axe {vb.theta:.0f} deg, naissance {vb.n:.2f} m, cle {vb.n + vb.f:.2f} m")
         # portes : vantaux dessines sur le plan, vitres si un point de reglage tombe dedans
-        vit = [Point(S.pt(*q['point'], dx, dy)) for q in pcfg.get('vantaux_vitres_plan_pt', []) if by_name[q['niveau']] == i]
+        vit = [Point(S.pt(*q['point'], dx, dy)) for q in pcfg.get('vantaux_vitres_plan_pt', []) if by_name.get(q['niveau'], -1) == i]
         hv = pcfg.get('hauteur_vantail_m', 2.04)
         npl = nvi = 0
         for k, l in enumerate(lv):          # un element par vantail : niveauN_porte_K (deplacable dans l'editeur)
@@ -386,8 +400,8 @@ def main(src, dst, cfg='reglages.json'):
                 add(f'{n}_porte_{k}', solid(P.extrude(l, z + sz, hv, None)), mats['porte']); npl += 1
         fr, gl = [], []
         print(f'  portes : {npl} pleines, {nvi} vitree(s)')
-        hint = S.pt(*centers[i][0], dx, dy)
-        for v in [v for v in esc.get('vitrines', []) if by_name[v['niveau']] == i]:
+        hint = S.pt(*centers[i][0], dx, dy) if centers[i][0] else (W.centroid.x, W.centroid.y)
+        for v in [v for v in esc.get('vitrines', []) if by_name.get(v['niveau'], -1) == i]:
             # porte de la vitrine deplacee : sa baie (et les montants qui la bordent) glisse le long de la vitrine, sans trou dans le vitrage
             p0_, p1_ = S.pt(*v['de_plan_pt'], dx, dy), S.pt(*v['a_plan_pt'], dx, dy); L_ = math.dist(p0_, p1_)
             ux_, uy_ = (p1_[0] - p0_[0]) / L_, (p1_[1] - p0_[1]) / L_
@@ -415,10 +429,10 @@ def main(src, dst, cfg='reglages.json'):
             print(f'  placards : {len(fronts)} facade(s), {body.area:.2f} m2')
         rl, sp = [], []
         rg = eq.get('rails_regles', {})
-        obst = [Point(*S.pt(*p_['position_plan_pt'], dx, dy)).buffer(p_['diametre_m'] / 2) for p_ in murs['poteaux'] if by_name[p_['niveau']] == i]
+        obst = [Point(*S.pt(*p_['position_plan_pt'], dx, dy)).buffer(p_['diametre_m'] / 2) for p_ in murs.get('poteaux', []) if by_name.get(p_['niveau'], -1) == i]
         libre = (outline.union(tremie) if i == hi else outline).difference(W.buffer(rg.get('distance_min_murs_m', 0.30)))   # le plafond couvre la tremie
         for o_ in obst: libre = libre.difference(o_.buffer(rg.get('distance_min_obstacles_m', 0.15)))
-        for j, r in enumerate([r for r in eq.get('rails', []) if by_name[r['niveau']] == i]):
+        for j, r in enumerate([r for r in eq.get('rails', []) if by_name.get(r['niveau'], -1) == i]):
             rl, sp = [], []
             p0, p1 = S.pt(*r['de_plan_pt'], dx, dy), S.pt(*r['a_plan_pt'], dx, dy)
             for q0, q1 in EQ.clip_rail(p0, p1, libre, rg.get('longueur_min_m', 0.6)):
@@ -440,33 +454,36 @@ def main(src, dst, cfg='reglages.json'):
                 print(f"  {r.get('nom', 'rail')} {ls_.length:.2f} m : {ls_.distance(W):.2f} m du mur le plus proche"
                       + (f", {min(ls_.distance(o_) for o_ in obst):.2f} m d'un poteau" if obst else '') + f", jeu sous plafond {jeu * 100:.1f} cm")
             add(f'{n}_rail_{j}__rail', solid(rl), mats['rail']); add(f'{n}_rail_{j}__spots', solid(sp), mats['lum'])
-        for j, s_ in enumerate([s_ for s_ in eq.get('suspensions', []) if by_name[s_['niveau']] == i]):
+        for j, s_ in enumerate([s_ for s_ in eq.get('suspensions', []) if by_name.get(s_['niveau'], -1) == i]):
             x_, y_ = S.pt(*s_['position_plan_pt'], dx, dy)
             a_, b_ = EQ.suspension(x_, y_, z + H, z + s_['hauteur_bas_m'], s_['diametre_m'])
             add(f'{n}_suspension_{j}__lampe', solid(a_), mats['lum']); add(f'{n}_suspension_{j}__cable', solid(b_), mats['rail'])
         b = W.bounds; print(f"{niveaux[i]['nom']}: {b[2]-b[0]:.2f} x {b[3]-b[1]:.2f} m, plafond {H:.2f} m")
 
-    gen = CB.build if hel.get('moteur') == 'extension_blender' else SP.build
-    try:
-        wood, steel, panel, nsp = gen(spiral_xy, Rsp, Z[lo], Z[hi], hel)
-    except (OSError, subprocess.CalledProcessError) as e:     # Blender introuvable : escalier genere sans Blender
-        print('ATTENTION : Blender indisponible (' + str(e).split(':')[0] + '), escalier genere sans Blender')
-        wood, steel, panel, nsp = SP.build(spiral_xy, Rsp, Z[lo], Z[hi], hel)
-    print('colimacon :', nsp, 'hauteurs de marche')
+    wood = steel = panel = []
+    if lo is not None:
+        gen = CB.build if hel.get('moteur') == 'extension_blender' else SP.build
+        try:
+            wood, steel, panel, nsp = gen(spiral_xy, Rsp, Z[lo], Z[hi], hel)
+        except (OSError, subprocess.CalledProcessError) as e:     # Blender introuvable : escalier genere sans Blender
+            print('ATTENTION : Blender indisponible (' + str(e).split(':')[0] + '), escalier genere sans Blender')
+            wood, steel, panel, nsp = SP.build(spiral_xy, Rsp, Z[lo], Z[hi], hel)
+        print('colimacon :', nsp, 'hauteurs de marche')
     post_meshes = {}
-    for j, p in enumerate(murs['poteaux']):
-        k = by_name[p['niveau']]; x, y = S.pt(*p['position_plan_pt'], *shift[k])
+    for j, p in enumerate(murs.get('poteaux', [])):
+        k = by_name.get(p['niveau'], -1); x, y = S.pt(*p['position_plan_pt'], *shift[k])
         hp_ = next((vb.h(x, y) for vb in vaults.get(k, []) if vb.room.contains(Point(x, y))), CEIL[k])   # jusqu'a la voute
         c = trimesh.creation.cylinder(radius=p['diametre_m'] / 2, height=hp_, sections=32)
         c.apply_translation([x, y, Z[k] + hp_ / 2])
         post_meshes[(k, j)] = (p.get('materiau', 'acier'), [c])
-    add(f'niveau{lo}_colimacon_bois', solid(wood), mats['bois'])
-    add(f'niveau{lo}_colimacon_acier', solid(steel), mats['acier'])
-    add(f'niveau{hi}_garde_corps', solid(panel), mats['tole'])
+    if lo is not None:
+        add(f'niveau{lo}_colimacon_bois', solid(wood), mats['bois'])
+        add(f'niveau{lo}_colimacon_acier', solid(steel), mats['acier'])
+        add(f'niveau{hi}_garde_corps', solid(panel), mats['tole'])
     for (k, j), (m, ms) in post_meshes.items(): add(f'niveau{k}_poteau_{j}', solid(ms), mats.get(m, mats['acier']))
 
     dr = esc.get('escalier_droit')
-    if dr:
+    if dr and dr.get('niveau_bas') in by_name and dr.get('niveau_haut') in by_name:
         lo2, hi2 = by_name[dr['niveau_bas']], by_name[dr['niveau_haut']]
         ms, n = S.straight_stair(pages[lo2], Z[lo2], Z[hi2], *shift[lo2], cfg=dr, layer=cal['mobilier'])
         print('escalier droit :', n, 'marches')
@@ -481,7 +498,8 @@ def main(src, dst, cfg='reglages.json'):
     c = scene.bounds.mean(axis=0); scene.apply_translation([-c[0], 0, -c[2]])
     scene.export(dst); print('ok', dst, scene.extents)
     # axe du colimacon dans le repere du GLB, pour le curseur de rotation de la visionneuse
-    axe = dict(x=float(spiral_xy[0] - c[0]), z=float(-spiral_xy[1] - c[2]), rotation_deg=hel.get('rotation_deg', 0), niveaux_y=[float(v) for v in Z])
+    axe = dict(x=float(spiral_xy[0] - c[0]) if spiral_xy else 0.0, z=float(-spiral_xy[1] - c[2]) if spiral_xy else 0.0,
+               rotation_deg=(hel or {}).get('rotation_deg', 0), niveaux_y=[float(v) for v in Z], colimacon=spiral_xy is not None)
     json.dump(axe, open(dst.rsplit('.', 1)[0] + '.axe.json', 'w')); print('axe colimacon', axe)
     # pieces dans le repere du GLB (x, z), avec de quoi revenir aux points du plan pour l'editeur
     ring = lambda r_: [[round(x - c[0], 3), round(-y - c[2], 3)] for x, y in r_.coords]

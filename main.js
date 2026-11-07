@@ -62,11 +62,19 @@ function lireProjet(dossier) {
   const meta = JSON.parse(fs.readFileSync(path.join(dossier, 'projet.json'), 'utf-8'));
   return { dossier, nom: meta.nom, plan: meta.plan };
 }
+function analyserPlan(planChemin, reglagesChemin, nom) {   // projet neuf : réglages tirés du seul plan (moteur/analyse.py), rien d'un autre projet
+  const c = config(), args = [path.join(path.dirname(MOTEUR), 'analyse.py'), planChemin, reglagesChemin, nom];
+  const r = spawnSync(c.python, c.python === 'py' ? ['-3'].concat(args) : args, { encoding: 'utf-8', env: Object.assign({}, process.env, { PYTHONIOENCODING: 'utf-8' }) });
+  if (r.error) return { ok: false, erreur: `Python introuvable (${c.python}).` };
+  if (r.status !== 0) { const l = (r.stderr || r.stdout || '').trim().split('\n'); return { ok: false, erreur: l[l.length - 1] || 'analyse impossible' }; }
+  return { ok: true };
+}
 function creerProjet(dossier, nom, planSource, reglagesSource) {
   fs.mkdirSync(path.join(dossier, 'sortie'), { recursive: true });
   const plan = path.basename(planSource);
   fs.copyFileSync(planSource, path.join(dossier, plan));
-  fs.copyFileSync(reglagesSource, path.join(dossier, 'reglages.json'));
+  if (reglagesSource) fs.copyFileSync(reglagesSource, path.join(dossier, 'reglages.json'));
+  else { const a = analyserPlan(path.join(dossier, plan), path.join(dossier, 'reglages.json'), nom); if (!a.ok) return a; }
   const maintenant = new Date().toISOString();
   fs.writeFileSync(path.join(dossier, 'projet.json'),
     JSON.stringify({ nom, plan, version: 1, cree: maintenant, modifie: maintenant }, null, 2));
@@ -222,7 +230,10 @@ async function nouveauProjet(nom, planSource) {
   if (fs.existsSync(d.filePath) && fs.readdirSync(d.filePath).length) {
     dialog.showMessageBox(win, { type: 'warning', message: 'Ce dossier existe déjà et n’est pas vide.' }); return { ok: false };
   }
-  creerProjet(d.filePath, nom, planSource, path.join(EXEMPLE, 'reglages.json'));
+  const cp = creerProjet(d.filePath, nom, planSource, null);     // analyse complète du nouveau plan, aucun réglage repris
+  if (cp && cp.ok === false) {
+    dialog.showMessageBox(win, { type: 'error', message: 'Le plan n’a pas pu être analysé.', detail: cp.erreur }); return { ok: false };
+  }
   ouvrirProjet(d.filePath);
   return { ok: true };
 }

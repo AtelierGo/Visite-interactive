@@ -198,8 +198,7 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
       <div class="elevview" id="elevview" hidden><div class="ebar"><span id="elevmsg">Cliquez deux points pour mesurer.</span></div><canvas id="elevcv"></canvas></div>
     </div>
     <div class="tools">
-      <div><span class="lab">Niveau</span><span class="seg" role="group" aria-label="Niveau affiché">
-        <button id="lvl-0" aria-pressed="true">Rez-de-chaussée</button><button id="lvl-1" aria-pressed="false">Sous-sol</button><button id="lvl-all" aria-pressed="false">Les deux</button></span></div>
+      <div><span class="lab">Niveau</span><span class="seg" role="group" aria-label="Niveau affiché" id="lvlseg"></span></div>
       <div><span class="lab">Vue</span><span class="seg" role="group" aria-label="Point de vue">
         <button id="view-3d" aria-pressed="true">Perspective</button><button id="view-top" aria-pressed="false">Dessus</button><button id="view-eye" aria-pressed="false">Hauteur d'yeux</button></span></div>
       <div><span class="lab">Pivoter</span><span class="seg" role="group" aria-label="Pivoter la vue"><button id="rot-l" title="Pivoter la vue de 45° vers la gauche" aria-label="Pivoter à gauche">↺ 45°</button><button id="rot-r" title="Pivoter la vue de 45° vers la droite" aria-label="Pivoter à droite">↻ 45°</button></span></div>
@@ -237,6 +236,9 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
 
   // Chaque réglage : chemin dans reglages.json, libellé, unité, origine (plan / photo / à vérifier), effet en direct.
   const F = (path, label, o = {}) => Object.assign({ path, label }, o);
+  const NIVS = get(R, I.concat('niveaux')) || [], NEUF = !!R.analyse_auto;
+  const parNiveau = (key, label, o) => NIVS.map((n, k) => F(I.concat('niveaux', k, key), label(n, k), o));
+  const parListe = (base, fn) => (get(R, base) || []).map((e, k) => fn(base.concat(k), e, k)).flat();
   const STEPS = [
     { id: 'import', t: 'Import et échelle', s: 'Plan, calques, niveaux',
       d: 'Le plan Illustrator est lu calque par calque. Chaque page devient un niveau, calé sur un élément commun. Excluez ici les zones du plan à ne pas construire (cour, extérieur, voisin).',
@@ -250,9 +252,9 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
           F(I.concat('calques', 'escalier_helicoidal'), 'Escalier hélicoïdal', { type: 'text', src: 'plan' }),
           F(I.concat('calques', 'placards'), 'Placards', { type: 'text', src: 'plan' }) ] },
         { h: 'Niveaux', f: [
-          F(I.concat('niveaux', 0, 'nom'), 'Page 1', { type: 'text', src: 'plan' }),
-          F(I.concat('niveaux', 1, 'nom'), 'Page 2', { type: 'text', src: 'plan' }),
-          F(I.concat('alignement_niveaux', 'methode'), 'Calage des niveaux', { type: 'select', opts: [['axe_escalier_helicoidal', 'Axe du colimaçon'], ['repere', 'Repère commun'], ['manuel', 'Décalage manuel']], src: 'check', note: 'Les deux pages sont décalées de 1,11 m sur le fichier.' }) ] } ] },
+          ...NIVS.map((n, k) => F(I.concat('niveaux', k, 'nom'), 'Nom du niveau, page ' + n.page, { type: 'text', src: 'plan' })),
+          ...NIVS.slice(1).map((n, k) => F(I.concat('niveaux', k + 1, 'position'), 'Page ' + n.page + ' : position', { type: 'select', def: 'dessous', opts: [['dessus', 'Au-dessus du niveau précédent'], ['dessous', 'En dessous (sous-sol)']], src: 'check' })),
+          ...(NIVS.length > 1 ? [F(I.concat('alignement_niveaux', 'methode'), 'Calage des niveaux', { type: 'select', def: 'axe_escalier_helicoidal', opts: [['axe_escalier_helicoidal', 'Axe du colimaçon'], ['aucun', 'Pages superposées telles quelles']], src: 'check' })] : []) ] } ] },
     { id: 'elevations', t: 'Élévations', s: 'Mesurer les hauteurs',
       d: 'Les élévations et coupes du fichier Illustrator s’affichent à l’échelle. Cliquez deux points pour mesurer une hauteur ou une largeur, puis appliquez la mesure au réglage voulu.',
       elev: true },
@@ -270,21 +272,20 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
       lintels: true,
       groups: [
         { h: 'Hauteurs', f: [
-          F(I.concat('niveaux', 0, 'hauteur_sous_plafond_m'), 'Plafond du rez-de-chaussée', { type: 'number', step: 0.05, u: 'm', src: 'photo', warn: true }),
-          F(I.concat('niveaux', 1, 'hauteur_sous_plafond_m'), 'Clé de voûte du sous-sol', { type: 'number', step: 0.05, u: 'm', src: 'photo', warn: true }),
+          ...parNiveau('hauteur_sous_plafond_m', n => 'Hauteur sous plafond, ' + n.nom, { type: 'number', step: 0.05, u: 'm', src: 'photo', warn: true }),
           F(MU.concat('epaisseur_dalle_m'), 'Épaisseur de dalle', { type: 'number', step: 0.01, u: 'm' }),
           F(MU.concat('hauteur_linteau_m'), 'Haut des ouvertures', { type: 'number', step: 0.01, u: 'm' }) ] },
-        { h: 'Voûte du sous-sol', f: [
-          F(MU.concat('plafonds', 0, 'forme'), 'Forme', { type: 'select', opts: [['plat', 'Plat'], ['voute_berceau', 'Voûte en berceau'], ['voute_aretes', "Voûte d'arêtes"], ['cathedrale', 'Cathédrale']], src: 'photo' }),
-          F(MU.concat('plafonds', 0, 'hauteur_naissance_m'), 'Naissance', { type: 'number', step: 0.05, u: 'm', src: 'photo', warn: true }),
-          F(MU.concat('plafonds', 0, 'hauteur_cle_m'), 'Clé', { type: 'number', step: 0.05, u: 'm', src: 'photo', warn: true }),
-          F(null, 'Afficher la voûte dans l’aperçu', { type: 'toggle', live: 'voute' }) ] },
-        { h: 'Poteaux du sous-sol', f: [
-          F(MU.concat('poteaux', 0, 'diametre_m'), 'Poteau 1, diamètre', { type: 'number', step: 0.01, u: 'm', src: 'plan' }),
-          F(MU.concat('poteaux', 1, 'diametre_m'), 'Poteau 2, diamètre', { type: 'number', step: 0.01, u: 'm', src: 'plan' }) ] },
+        { h: 'Voûtes', f: [
+          ...parListe(MU.concat('plafonds'), (b, e) => [
+            F(b.concat('forme'), (e.nom || 'Plafond') + ', forme', { type: 'select', opts: [['plat', 'Plat'], ['voute_berceau', 'Voûte en berceau'], ['voute_aretes', "Voûte d'arêtes"], ['cathedrale', 'Cathédrale']], src: 'photo' }),
+            F(b.concat('hauteur_naissance_m'), 'Naissance', { type: 'number', step: 0.05, u: 'm', src: 'photo', warn: true }),
+            F(b.concat('hauteur_cle_m'), 'Clé', { type: 'number', step: 0.05, u: 'm', src: 'photo', warn: true })]),
+          ...((get(R, MU.concat('plafonds')) || []).length ? [F(null, 'Afficher la voûte dans l’aperçu', { type: 'toggle', live: 'voute' })] : []) ] },
+        { h: 'Poteaux', f: parListe(MU.concat('poteaux'), (b, e, k) => [F(b.concat('diametre_m'), `Poteau ${k + 1} (${e.niveau}), diamètre`, { type: 'number', step: 0.01, u: 'm', src: 'plan' })]) },
         { h: 'Nettoyage', f: [
           F(MU.concat('nettoyage_bandes_etroites_m'), 'Bandes étroites supprimées sous', { type: 'number', step: 0.05, u: 'm' }),
-          F(I.concat('niveaux', 1, 'linteaux_ouverture_max_m'), 'Sous-sol : ouvertures fermées au-dessus jusqu’à', { type: 'number', step: 0.1, u: 'm' }) ] } ] },
+          F(MU.concat('linteaux_ouverture_max_m'), 'Ouvertures fermées au-dessus jusqu’à', { type: 'number', step: 0.1, u: 'm' }),
+          ...parNiveau('linteaux_ouverture_max_m', n => n.nom + ' : ouvertures fermées au-dessus jusqu’à', { type: 'number', step: 0.1, u: 'm' }) ] } ] },
     { id: 'ouvertures', t: 'Ouvertures et escaliers', s: 'Colimaçon, portes, vitrine',
       d: 'Le colimaçon est généré par l’extension Blender, puis complété par le palier et le garde-corps de la trémie.',
       groups: [
@@ -300,11 +301,11 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
         { h: 'Portes', f: [
           F(ES.concat('portes', 'hauteur_vantail_m'), 'Hauteur des vantaux', { type: 'number', step: 0.01, u: 'm' }),
           F(ES.concat('portes', 'epaisseur_vantail_m'), 'Épaisseur des vantaux', { type: 'number', step: 0.005, u: 'm' }) ] },
-        { h: 'Vitrine sur rue', f: [
-          F(ES.concat('vitrines', 0, 'hauteur_naissance_m'), 'Naissance de l’arc', { type: 'number', step: 0.05, u: 'm', src: 'photo' }),
-          F(ES.concat('vitrines', 0, 'hauteur_cle_m'), 'Clé de l’arc', { type: 'number', step: 0.05, u: 'm', src: 'photo', warn: true }),
-          F(ES.concat('vitrines', 0, 'hauteur_imposte_m'), 'Imposte', { type: 'number', step: 0.05, u: 'm', src: 'photo' }),
-          F(ES.concat('vitrines', 0, 'epaisseur_mur_m'), 'Épaisseur du mur de façade', { type: 'number', step: 0.05, u: 'm' }) ] } ] },
+        { h: 'Vitrines', f: parListe(ES.concat('vitrines'), (b, e) => [
+          F(b.concat('hauteur_naissance_m'), (e.nom || 'Vitrine') + ' : naissance de l’arc', { type: 'number', step: 0.05, u: 'm', src: 'photo' }),
+          F(b.concat('hauteur_cle_m'), 'Clé de l’arc', { type: 'number', step: 0.05, u: 'm', src: 'photo', warn: true }),
+          F(b.concat('hauteur_imposte_m'), 'Imposte', { type: 'number', step: 0.05, u: 'm', src: 'photo' }),
+          F(b.concat('epaisseur_mur_m'), 'Épaisseur du mur de façade', { type: 'number', step: 0.05, u: 'm' })]) } ] },
     { id: 'materiaux', t: 'Sols, murs et plafonds', s: 'Carrelage, couleurs',
       d: 'Calez le carrelage pièce par pièce, puis les couleurs relevées sur les photos. Tout s’affiche tout de suite dans l’aperçu.',
       sol: true,
@@ -330,10 +331,10 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
           F(EQ.concat('rails_regles', 'distance_min_obstacles_m'), 'Distance minimale aux poteaux', { type: 'number', step: 0.05, u: 'm' }),
           F(EQ.concat('rails_regles', 'marge_sous_plafond_m'), 'Marge sous plafond', { type: 'number', step: 0.005, u: 'm' }),
           F(EQ.concat('rails_regles', 'inclinaison_spots_deg'), 'Inclinaison des spots', { type: 'number', step: 5, u: '°' }),
-          F(EQ.concat('rails', 0, 'spots_tous_les_m'), 'Pas des spots', { type: 'number', step: 0.1, u: 'm' }) ] },
-        { h: 'Suspension', f: [
-          F(EQ.concat('suspensions', 0, 'diametre_m'), 'Diamètre', { type: 'number', step: 0.05, u: 'm', src: 'photo' }),
-          F(EQ.concat('suspensions', 0, 'hauteur_bas_m'), 'Hauteur du bas', { type: 'number', step: 0.05, u: 'm', src: 'photo' }) ] } ] },
+          ...parListe(EQ.concat('rails'), (b, e) => [F(b.concat('spots_tous_les_m'), (e.nom || 'Rail') + ' : pas des spots', { type: 'number', step: 0.1, u: 'm' })]) ] },
+        { h: 'Suspensions', f: parListe(EQ.concat('suspensions'), (b, e, k) => [
+          F(b.concat('diametre_m'), `Suspension ${k + 1} : diamètre`, { type: 'number', step: 0.05, u: 'm', src: 'photo' }),
+          F(b.concat('hauteur_bas_m'), 'Hauteur du bas', { type: 'number', step: 0.05, u: 'm', src: 'photo' })]) } ] },
     { id: 'visite', t: 'Visite', s: 'Vérifier à hauteur d’yeux',
       d: 'Parcourez la maquette à 1,60 m et passez en revue les points que l’éditeur n’a pas pu trancher seul.',
       checks: true },
@@ -341,14 +342,14 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
       d: 'Choisissez la qualité du fichier, puis récupérez les réglages modifiés pour régénérer la maquette.',
       exp: true }
   ];
-  const CHECKS = [
+  const CHECKS = R.points_a_verifier || (NEUF ? [] : [
     ['Pièces', 'Noms et types proposés d’après le plan. La coupure en haut du couloir du rez-de-chaussée est posée par l’éditeur, la « Pièce 3 » de chaque niveau reste à nommer.', 'pieces'],
     ['Hauteur du rez-de-chaussée', 'Estimée à 2,95 m sur la photo de la vitrine. Une mesure réelle suffit à confirmer.', 'murs'],
     ['Voûte du sous-sol', 'Naissance 2,10 m et clé 3,15 m estimées sur les photos. Elle fixe la profondeur du sous-sol à 3,35 m.', 'murs'],
     ['Calage des deux pages', 'Décalage de 1,11 m corrigé sur l’axe du colimaçon.', 'import'],
     ['Marches du passage', 'Deux marches de 16 cm (32 cm au total) entre la salle d’expo 1 et le couloir, d’après la photo : hauteur à mesurer sur place.', 'pieces'],
     ['Orientation du colimaçon', 'Rotation de 72° choisie d’après les photos et l’arc en pointillés du plan.', 'ouvertures']
-  ];
+  ]);
 
   // ---------- Aperçu 3D ----------
   const stage = document.getElementById('stage'), status = document.getElementById('status'), hint = document.getElementById('hint');
@@ -393,7 +394,10 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
     controls.update(); applyOverlay();
   }
   const press = (p, id) => document.querySelectorAll('[id^="' + p + '"]').forEach(b => b.setAttribute('aria-pressed', String(b.id === id)));
-  ['0', '1', 'all'].forEach(l => document.getElementById('lvl-' + l).addEventListener('click', () => { level = l; press('lvl-', 'lvl-' + l);
+  { const sg = document.getElementById('lvlseg'), nv_ = PCS.niveaux || [];     // un bouton par niveau du projet
+    sg.innerHTML = nv_.map((n, k) => `<button id="lvl-${k}" aria-pressed="${k === 0}"></button>`).join('') + (nv_.length > 1 ? `<button id="lvl-all" aria-pressed="false">${nv_.length > 2 ? 'Tous' : 'Les deux'}</button>` : '');
+    nv_.forEach((n, k) => { sg.querySelector('#lvl-' + k).textContent = n.nom; }); }
+  (PCS.niveaux || []).map((n, k) => String(k)).concat((PCS.niveaux || []).length > 1 ? ['all'] : []).forEach(l => document.getElementById('lvl-' + l).addEventListener('click', () => { level = l; press('lvl-', 'lvl-' + l);
     if (drawing) endDraw(false); if (current === 'pieces' || current === 'import' || current === 'murs') setTimeout(render);
     if (view === 'eye' && l === 'all') { view = '3d'; press('view-', 'view-3d'); } applyLevel(); applyView(); }));
   ['3d', 'top', 'eye'].forEach(v => document.getElementById('view-' + v).addEventListener('click', () => { view = v; press('view-', 'view-' + v);
@@ -916,7 +920,7 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
     stepsEl.innerHTML = '';
     STEPS.forEach((s, i) => {
       const li = document.createElement('li'), b = document.createElement('button');
-      const nwarn = (s.groups || []).reduce((a, g) => a + g.f.filter(f => f.warn && !(f.path && luElev(f.path))).length, 0);
+      const nwarn = (s.groups || []).reduce((a, g) => a + g.f.filter(f => present(f) && f.warn && !(f.path && luElev(f.path))).length, 0);
       b.innerHTML = `<span class="n">${i + 1}</span><span class="t">${s.t}</span><span class="s${nwarn ? ' warn' : ''}">${nwarn ? nwarn + ' point' + (nwarn > 1 ? 's' : '') + ' à vérifier' : s.s}</span>`;
       if (s.id === current) b.setAttribute('aria-current', 'step');
       b.addEventListener('click', () => goStep(s.id));
@@ -924,13 +928,15 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
     });
     document.getElementById('nchg').textContent = changes().length;
   }
-  const SRC = { plan: ['plan', 'lu sur le plan'], photo: ['photo', 'estimé sur photo'], check: ['check', 'à vérifier'] };
+  const SRC = { plan: ['plan', 'lu sur le plan'], photo: NEUF ? ['photo', 'valeur par défaut'] : ['photo', 'estimé sur photo'], check: ['check', 'à vérifier'] };
+  const present = f => !f.path || f.def !== undefined || get(R, f.path) !== undefined;     // réglage absent de ce projet : pas de champ
   function field(f) {
     const row = document.createElement('div'); row.className = 'field';
     const id = 'f-' + (f.path ? f.path.join('-') : f.live).replace(/[^a-zA-Z0-9_-]/g, '');
     const lab = document.createElement('label'); lab.htmlFor = id; lab.textContent = f.label; row.appendChild(lab);
     const ctl = document.createElement('div'); ctl.className = 'ctl'; row.appendChild(ctl);
     let input, val = f.path ? get(R, f.path) : showVault;
+    if (val === undefined && f.def !== undefined) val = f.def;
     if (f.type === 'select') { input = document.createElement('select'); f.opts.forEach(([v, t]) => { const o = document.createElement('option'); o.value = v; o.textContent = t; input.appendChild(o); }); input.value = val; }
     else if (f.type === 'color') { input = document.createElement('input'); input.type = 'color'; input.value = hex(val); }
     else if (f.type === 'toggle') { input = document.createElement('input'); input.type = 'checkbox'; input.checked = val; }
@@ -1281,7 +1287,8 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
     if (s.sol) renderSol();
     if (s.elev) renderElev();
     elevView.hidden = current !== 'elevations'; if (!elevView.hidden) elevDraw();
-    (s.groups || []).forEach(g => { const d = document.createElement('div'); d.className = 'group'; d.innerHTML = `<h3>${g.h}</h3>`; g.f.forEach(f => d.appendChild(field(f))); groupsEl.appendChild(d); });
+    (s.groups || []).forEach(g => { const fs_ = g.f.filter(present); if (!fs_.length) return;
+      const d = document.createElement('div'); d.className = 'group'; d.innerHTML = `<h3>${g.h}</h3>`; fs_.forEach(f => d.appendChild(field(f))); groupsEl.appendChild(d); });
     if (s.checks) {
       const d = document.createElement('div'); d.className = 'group';
       d.innerHTML = '<h3>Points à vérifier</h3>';
