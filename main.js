@@ -137,7 +137,7 @@ async function ouvrirProjet(dossier) {
   win.setTitle(`${projet.nom} · Atelier 3D`);
   let vMaquette = ''; try { vMaquette = fs.readFileSync(sortie('version.txt'), 'utf-8').trim(); } catch {}
   if (!fs.existsSync(sortie('maquette.glb')) || vMaquette !== app.getVersion()) {   // maquette absente ou faite par une version précédente du moteur
-    win.loadFile(path.join(RACINE, 'accueil.html'), { hash: 'generation' });
+    await win.loadFile(path.join(RACINE, 'accueil.html'), { hash: 'generation' }).catch(() => {});   // la page doit être prête pour afficher une erreur
     const r = await generer();
     if (!r.ok) { win.webContents.send('erreur', 'La génération a échoué : ' + r.erreur); return; }
   }

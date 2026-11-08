@@ -72,11 +72,12 @@ body.generation #gen { display: grid; }
     </div>
   </section>
 </main>
-<div id="gen"><div><div class="roue"></div><h1 style="font-size:18px;margin:0">Génération de la maquette</h1><p id="gen-msg">Lecture du plan et construction du GLB…</p></div></div>
+<div id="gen"><div><div class="roue"></div><h1 style="font-size:18px;margin:0">Génération de la maquette</h1><p id="gen-msg">Lecture du plan et construction du GLB…</p><button class="btn" id="gen-retour" hidden>Retour à l’accueil</button></div></div>
 <script>
 const A = window.atelier;
 if (location.hash === '#generation') document.body.classList.add('generation');
-A.surMessage(t => { document.getElementById('gen-msg').textContent = t; document.querySelector('.roue').style.display = 'none'; });
+A.surMessage(t => { document.getElementById('gen-msg').textContent = t; document.querySelector('.roue').style.display = 'none'; document.getElementById('gen-retour').hidden = false; });
+document.getElementById('gen-retour').addEventListener('click', () => { location.hash = ''; location.reload(); });
 const $ = id => document.getElementById(id);
 function afficherPython(py) { const e = $('etat-python'); e.textContent = py.message; e.className = 'etat' + (py.ok ? '' : ' ko'); }
 async function charger() {
