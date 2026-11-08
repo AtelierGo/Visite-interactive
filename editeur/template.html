@@ -259,12 +259,16 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
           F(I.concat('calques', 'murs'), 'Murs', { type: 'text', src: 'plan' }),
           F(I.concat('calques', 'portes'), 'Portes', { type: 'text', src: 'plan' }),
           F(I.concat('calques', 'portes_coulissantes'), 'Portes coulissantes', { type: 'text', src: 'plan' }),
+          F(I.concat('calques', 'fenetres'), 'Fenêtres', { type: 'text', def: '', note: 'Traits ou rectangle posés sur le mur, à l’endroit de la fenêtre. Vide : pas de fenêtres.' }),
           F(I.concat('calques', 'escalier_helicoidal'), 'Escalier hélicoïdal', { type: 'text', src: 'plan' }),
           F(I.concat('calques', 'placards'), 'Placards', { type: 'text', src: 'plan' }) ] },
         { h: 'Niveaux', f: [
           ...NIVS.map((n, k) => F(I.concat('niveaux', k, 'nom'), 'Nom du niveau, page ' + n.page, { type: 'text', src: 'plan' })),
           ...NIVS.slice(1).map((n, k) => F(I.concat('niveaux', k + 1, 'position'), 'Page ' + n.page + ' : position', { type: 'select', def: 'dessous', opts: [['dessus', 'Au-dessus du niveau précédent'], ['dessous', 'En dessous (sous-sol)']], src: 'check' })),
           ...(NIVS.length > 1 ? [F(I.concat('alignement_niveaux', 'methode'), 'Calage des niveaux', { type: 'select', def: 'axe_escalier_helicoidal', opts: [['axe_escalier_helicoidal', 'Axe du colimaçon'], ['aucun', 'Pages superposées telles quelles']], src: 'check' })] : []) ] } ] },
+    { id: 'photos', t: 'Photos', s: 'Textures et couleurs du chantier',
+      d: 'Ajoutez les photos du chantier juste après le plan. Sur une photo, encadrez un morceau de mur, de sol ou de plafond : il devient la texture (ou la couleur) de la surface choisie.',
+      photos: true },
     { id: 'elevations', t: 'Élévations', s: 'Mesurer les hauteurs',
       d: 'Les élévations et coupes du fichier Illustrator s’affichent à l’échelle. Cliquez deux points pour mesurer une hauteur ou une largeur, puis appliquez la mesure au réglage voulu.',
       elev: true },
@@ -310,6 +314,8 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
         { h: 'Portes', f: [
           F(ES.concat('portes', 'hauteur_vantail_m'), 'Hauteur des vantaux', { type: 'number', step: 0.01, u: 'm' }),
           F(ES.concat('portes', 'epaisseur_vantail_m'), 'Épaisseur des vantaux', { type: 'number', step: 0.005, u: 'm' }),
+          F(ES.concat('fenetres', 'allege_m'), 'Fenêtres : hauteur d’allège', { type: 'number', step: 0.05, u: 'm', def: 0.9, note: 'Pour toutes les fenêtres ; chacune se règle aussi seule avec « Déplacer un élément ».' }),
+          F(ES.concat('fenetres', 'haut_m'), 'Fenêtres : haut', { type: 'number', step: 0.05, u: 'm', def: null, note: 'Vide : haut des ouvertures.' }),
           F(ES.concat('portes', 'fermees_au_depart'), 'Portes et fenêtres fermées au départ', { type: 'toggle', def: false }),
           F(ES.concat('portes', 'ajuster_dans_ouverture'), 'Vantaux recalés dans leur ouverture (largeur, milieu du mur, hauteur du linteau)', { type: 'toggle', def: false }),
           F(ES.concat('portes', 'recouvrement_tableaux_m'), 'Recouvrement sur les tableaux (pas de jour)', { type: 'number', step: 0.001, u: 'm', def: 0.002 }) ] },
@@ -495,6 +501,19 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
   buildSeps();
   const zoneGroup = new THREE.Group(); scene.add(zoneGroup);
   const zonesCfg = () => (get(R, I).zones_exclues = get(R, I).zones_exclues || []);
+  const murGroup = new THREE.Group(); scene.add(murGroup);
+  const mursCfg = () => (get(R, MU).murs_regles = get(R, MU).murs_regles || []);
+  function buildMurs() {
+    murGroup.clear();
+    mursCfg().forEach(mz => {
+      const l = NIV.indexOf(mz.niveau); if (l < 0 || mz.polygone_plan_pt.length < 3) return;
+      const pts = mz.polygone_plan_pt.map(([x, y]) => fromPlan(x, y, l));
+      const ln = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(pts.map(([x, z]) => new THREE.Vector3(x, LEVEL_Y[l] + 0.06, z))), new THREE.LineBasicMaterial({ color: 0x3f87c4, depthTest: false }));
+      ln.renderOrder = 11; ln.userData.lvl = l; murGroup.add(ln);
+    });
+    draw();
+  }
+  buildMurs();
   function buildZones() {
     zoneGroup.clear();
     zonesCfg().forEach(zn => {
@@ -556,7 +575,8 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
     sepGroup.visible = current === 'pieces';
     lintelGroup.visible = current === 'murs'; lintelGroup.children.forEach(o => { o.visible = lvlShown(o.userData.lvl); });
     stepGroup.visible = current === 'pieces' && view !== 'eye'; stepGroup.children.forEach(o => { o.visible = lvlShown(o.userData.lvl); }); placeStepProxy();
-    zoneGroup.visible = (current === 'import' || current === 'pieces') && view !== 'eye'; zoneGroup.children.forEach(o => { o.visible = lvlShown(o.userData.lvl); }); sepGroup.children.forEach(o => { o.visible = lvlShown(o.userData.lvl); });
+    zoneGroup.visible = (current === 'import' || current === 'pieces') && view !== 'eye'; zoneGroup.children.forEach(o => { o.visible = lvlShown(o.userData.lvl); });
+    murGroup.visible = current === 'murs' && view !== 'eye'; murGroup.children.forEach(o => { o.visible = lvlShown(o.userData.lvl); }); sepGroup.children.forEach(o => { o.visible = lvlShown(o.userData.lvl); });
     draw();
   }
   const tagsEl = document.getElementById('tags');
@@ -594,6 +614,8 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
       ? (n < 1 ? `${NIV[d.lvl]} · cliquez un côté de l’ouverture (sur le mur)` : 'Cliquez l’autre côté de l’ouverture')
       : d.kind === 'marche'
       ? (n < 1 ? `${NIV[d.lvl]} · cliquez une extrémité de la dernière contremarche (le nez de la marche du haut)` : 'Cliquez l’autre extrémité')
+      : d.kind === 'mur'
+      ? (n < 3 ? `${NIV[d.lvl]} · entourez la partie de mur à régler (${n} coin${n > 1 ? 's' : ''})` : `${n} coins · cliquez le premier coin ou « Terminer »`)
       : d.kind === 'zone'
       ? (n < 3 ? `${NIV[d.lvl]} · cliquez les coins de la zone à exclure (${n} posé${n > 1 ? 's' : ''})` : `${n} coins · cliquez le premier coin ou « Terminer »`)
       : d.kind === 'piece'
@@ -610,6 +632,7 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
       if (d.kind === 'linteau') { lintelsCfg().push({ niveau: NIV[d.lvl], nom: 'linteau ' + (lintelsCfg().length + 1), ligne_plan_pt: plan, hauteur_dessous_m: 2.10, rayon_recherche_m: 0.35 }); buildLintels(); updCount(); }
       else if (d.kind === 'marche') { stepsCfg().push({ niveau: NIV[d.lvl], nom: 'marches ' + (stepsCfg().length + 1), ligne_plan_pt: plan, cote_qui_monte: 'nord',
           mode: 'marches', marches: 2, hauteur_marche_m: 0.17, cote_m: null, giron_m: 0.28 }); buildSteps(); updCount(); }
+      else if (d.kind === 'mur') { mursCfg().push({ niveau: NIV[d.lvl], nom: 'mur ' + (mursCfg().length + 1), polygone_plan_pt: plan, bas_m: 0, hauteur_m: 1.0 }); buildMurs(); updCount(); }
       else if (d.kind === 'zone') { zonesCfg().push({ niveau: NIV[d.lvl], nom: 'zone exclue ' + (zonesCfg().length + 1), polygone_plan_pt: plan }); buildZones(); updCount(); }
       else if (d.kind === 'piece') {
         const e = { niveau: NIV[d.lvl], nom: 'Pièce ' + (rooms.filter(r => r.lvl === d.lvl).length + 1), type: 'piece', polygone_plan_pt: plan, sol: {} };
@@ -636,6 +659,7 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
     if (!snapBox.checked || (e && e.altKey) || !PCS.murs || !PCS.murs[lvl]) return { p, kind: null };
     const r = 14 * pxWorld(); let best = null, bd = r;
     (drawing ? drawing.pts : []).forEach(q => { const d = Math.hypot(p.x - q.x, p.z - q.z); if (d < bd) { bd = d; best = [q.x, q.z, 'point']; } });
+    autresPoints(lvl).forEach(([x, z]) => { const d = Math.hypot(p.x - x, p.z - z); if (d < bd) { bd = d; best = [x, z, 'point']; } });
     PCS.murs[lvl].forEach(ring => ring.forEach(([x, z]) => { const d = Math.hypot(p.x - x, p.z - z); if (d < bd) { bd = d; best = [x, z, 'angle']; } }));
     if (!best) {
       bd = r * 0.8;
@@ -644,7 +668,27 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
         const t = Math.max(0, Math.min(1, ((p.x - ax) * vx + (p.z - az) * vz) / L2)), qx = ax + t * vx, qz = az + t * vz, d = Math.hypot(p.x - qx, p.z - qz);
         if (d < bd) { bd = d; best = [qx, qz, 'mur']; } } });
     }
-    return best ? { p: new THREE.Vector3(best[0], p.y, best[1]), kind: best[2] } : { p, kind: null };
+    if (!best && drawing && drawing.pts.length) {     // d'équerre avec le point précédent (ou le premier)
+      let x = p.x, z = p.z, k = null; const ends = [drawing.pts[drawing.pts.length - 1], drawing.pts[0]];
+      for (const q of ends) { if (Math.abs(p.x - q.x) < r * 0.8 && x === p.x) { x = q.x; k = 'equerre'; } if (Math.abs(p.z - q.z) < r * 0.8 && z === p.z) { z = q.z; k = 'equerre'; } }
+      if (k) best = [x, z, k];
+    }
+    if (!best) {       // sinon au centimètre (repère du plan)
+      const l_ = PCS.niveaux[lvl] || { dx: 0, dy: 0 }, ox = -PCS.cx % 0.01, oz = -PCS.cz % 0.01;
+      return { p: new THREE.Vector3(Math.round((p.x - ox) * 100) / 100 + ox, p.y, Math.round((p.z - oz) * 100) / 100 + oz), kind: null };
+    }
+    return { p: new THREE.Vector3(best[0], p.y, best[1]), kind: best[2] };
+  }
+  function autresPoints(lvl) {     // points déjà tracés sur ce niveau : coupures, marches, linteaux, zones, pièces dessinées, contours des pièces
+    const nv = NIV[lvl], out = [], add = pts => (pts || []).forEach(q => out.push(fromPlan(q[0], q[1], lvl)));
+    (pcfg().separations || []).filter(x => x.niveau === nv).forEach(x => add(x.ligne_plan_pt));
+    (pcfg().liste || []).filter(x => x.niveau === nv).forEach(x => add(x.polygone_plan_pt));
+    try { stepsCfg().filter(x => x.niveau === nv).forEach(x => add(x.ligne_plan_pt)); } catch (e) { }
+    try { lintelsCfg().filter(x => x.niveau === nv).forEach(x => add(x.ligne_plan_pt)); } catch (e) { }
+    try { zonesCfg().filter(x => x.niveau === nv).forEach(x => add(x.polygone_plan_pt)); } catch (e) { }
+    try { mursCfg().filter(x => x.niveau === nv).forEach(x => add(x.polygone_plan_pt)); } catch (e) { }
+    rooms.filter(r => r.lvl === lvl && !gone(r)).forEach(r => r.contours.forEach(c => c.ext.forEach(q => out.push(q))));
+    return out;
   }
   function pick(e) {
     const raw = onPlane(e); if (!raw) return null;
@@ -691,8 +735,8 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
   // Le moteur déplace aussi l'ouverture d'une porte : l'ancienne est rebouchée, le mur est percé au nouvel endroit.
   const DEPP = ES.concat('deplacements');
   if (!get(ORIG, DEPP)) set(ORIG, DEPP, {}); if (!get(R, DEPP)) set(R, DEPP, {});
-  const MOVABLE = /^niveau(\d+)_(porte|placard|rail|suspension|poteau|escalier)(?:_(\d+))?(?:__|$)/;
-  const NOMS = { porte: 'Porte', placard: 'Placard', rail: 'Rail d’éclairage', suspension: 'Suspension', poteau: 'Poteau', escalier: 'Escalier droit' };
+  const MOVABLE = /^niveau(\d+)_(porte|fenetre|placard|rail|suspension|poteau|escalier)(?:_(\d+))?(?:__|$)/;
+  const NOMS = { porte: 'Porte', fenetre: 'Fenêtre', placard: 'Placard', rail: 'Rail d’éclairage', suspension: 'Suspension', poteau: 'Poteau', escalier: 'Escalier droit' };
   const elOf = name => MOVABLE.test(name || '') ? name.split('__')[0] : null;
   function elLabel(el) {
     const m = MOVABLE.exec(el); if (!m) return el;
@@ -821,9 +865,10 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
     if (ang === undefined) ang = angOf(R, el); ang = Math.round(ang * 10) / 10;
     if (garde === undefined) garde = gardeOf(R, el);
     if (larg === undefined) larg = larOf(R, el); larg = Math.round(Math.max(0.2, larg) * 1000) / 1000;
-    if (v.every((x, i) => Math.abs(x - ov[i]) < 5e-4) && (!p_ || Math.abs(ang - angOf(ORIG, el)) < 0.05) && garde === gardeOf(ORIG, el) && (!p_ || Math.abs(larg - larOf(ORIG, el)) < 0.002)) { if (o) all[el] = JSON.parse(JSON.stringify(o)); else delete all[el]; }
+    const FENK = ['allege_m', 'haut_m', 'largeur_fenetre_m'], keep = {}; FENK.forEach(k => { if (all[el] && all[el][k] != null) keep[k] = all[el][k]; });
+    if (!Object.keys(keep).length && v.every((x, i) => Math.abs(x - ov[i]) < 5e-4) && (!p_ || Math.abs(ang - angOf(ORIG, el)) < 0.05) && garde === gardeOf(ORIG, el) && (!p_ || Math.abs(larg - larOf(ORIG, el)) < 0.002)) { if (o) all[el] = JSON.parse(JSON.stringify(o)); else delete all[el]; }
     else { all[el] = { nom: elLabel(el), x_m: v[0], y_m: v[1], z_m: v[2] }; if (p_ && Math.abs(ang - aDep(p_)) >= 0.05) all[el].ouverture_deg = ang; if (garde) all[el].garder_ouverture = true;
-      if (p_ && p_.largeur_plan_m && Math.abs(larg - p_.largeur_plan_m) >= 0.002) all[el].largeur_m = larg; }
+      if (p_ && p_.largeur_plan_m && Math.abs(larg - p_.largeur_plan_m) >= 0.002) all[el].largeur_m = larg; Object.assign(all[el], keep); }
     applyDep(el); updCount(); updMoveBox(); if (replace) placeProxy();
   }
   function placeProxy() { if (!selEl) return; const b = new THREE.Box3(); meshesOf(selEl).forEach(o => b.expandByObject(o)); b.getCenter(proxy.position); proxy0 = proxy.position.clone(); dep0 = depOf(R, selEl); draw(); }
@@ -836,10 +881,11 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
     updMoveBox(); draw();
   }
   const movebox = document.getElementById('movebox');
+  const FCFG = () => get(R, ES.concat('fenetres')) || {};
   function updMoveBox() {
     movebox.hidden = !moveMode; if (!moveMode) return;
-    if (!selEl) { movebox.innerHTML = '<h4>Déplacer un élément</h4><p class="note">Cliquez une porte, un placard, un rail, une suspension, un poteau ou l’escalier droit. Faites glisser les flèches, ou tapez les valeurs.</p>'; return; }
-    const v = depOf(R, selEl), door = /_porte_/.test(selEl);
+    if (!selEl) { movebox.innerHTML = '<h4>Déplacer un élément</h4><p class="note">Cliquez une porte, une fenêtre, un placard, un rail, une suspension, un poteau ou l’escalier droit. Faites glisser les flèches, ou tapez les valeurs.</p>'; return; }
+    const v = depOf(R, selEl), fen = /_fenetre_/.test(selEl), door = /_porte_/.test(selEl) || fen;
     if (movebox.dataset.el !== selEl || !movebox.querySelector('input')) {
       movebox.dataset.el = selEl;
       movebox.innerHTML = `<h4></h4><div class="xyz">${['X (est)', 'Y (nord)', 'Z (haut)'].map((l, i) => `<label>${l}<input type="number" step="0.05" data-i="${i}"></label>`).join('')}</div>
@@ -850,12 +896,21 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
 </div>
           <label class="garde"><input type="checkbox" data-garde> Garder l’ouverture du mur (seule la porte bouge)</label>
           ${PORTE[selEl].axe_mur ? '<div class="row"><button class="btn ghost" data-act="axe">Centrer dans l’axe du mur</button></div>' : ''}` : ''}
+        ${fen ? `<div class="xyz">${[['allege_m', 'Allège', FCFG().allege_m ?? 0.9], ['haut_m', 'Haut', FCFG().haut_m ?? get(R, MU.concat('hauteur_linteau_m'))], ['largeur_fenetre_m', 'Largeur', 'plan']].map(([k, l, d]) =>
+            `<label>${l}<input type="number" step="0.05" data-fen="${k}" placeholder="${String(d).replace('.', ',')}"></label>`).join('')}</div>
+          <p class="note" style="margin:0">Hauteurs depuis le sol du niveau. Le mur se referme sous l’allège et au-dessus du haut à la régénération.</p>` : ''}
         <div class="row">${door ? '' : '<button class="btn ghost" data-act="mur" title="Le côté le plus proche du mur vient contre sa face">Contre le mur</button>'}<button class="btn ghost" data-act="sol" title="Le bas de l’élément sur le sol du niveau">Posé au sol</button>${door ? '' : '<button class="btn ghost" data-act="plafond" title="Le haut de l’élément sous le plafond du niveau">Sous le plafond</button>'}</div>
         <label class="garde"><input type="checkbox" data-aimant> Magnétisme : accroche aux murs, aux angles et aux autres éléments${door ? ', largeur au pas de 5 cm' : ''} (maintenir Alt pour l’ignorer)</label>
         <p class="note" data-snap style="color:var(--accent);min-height:1.2em;margin:0"></p>
         <p class="note" data-note></p>
         <div class="row"><button class="btn ghost" data-act="zero">Remettre comme sur le plan</button><button class="btn ghost" data-act="close">Terminer</button></div>`;
       movebox.querySelector('h4').textContent = elLabel(selEl);
+      movebox.querySelectorAll('[data-fen]').forEach(inp => { const d0 = (get(R, DEPP) || {})[selEl] || {}; inp.value = d0[inp.dataset.fen] ?? '';
+        inp.addEventListener('change', () => { const all = get(R, DEPP), k = inp.dataset.fen, t = String(inp.value).trim().replace(',', '.');
+          if (!all[selEl]) { const w_ = depOf(R, selEl); all[selEl] = { nom: elLabel(selEl), x_m: w_[0], y_m: w_[1], z_m: w_[2] }; }
+          if (t === '') delete all[selEl][k]; else { const x = parseFloat(t); if (isNaN(x) || x < 0) return; all[selEl][k] = Math.round(x * 1000) / 1000; }
+          const o = all[selEl]; if (!['allege_m', 'haut_m', 'largeur_fenetre_m', 'ouverture_deg', 'largeur_m', 'garder_ouverture'].some(k_ => o[k_] != null) && !o.x_m && !o.y_m && !o.z_m && !get(ORIG, DEPP)[selEl]) delete all[selEl];
+          updCount(); }); });
       movebox.querySelectorAll('input[data-i]').forEach(inp => inp.addEventListener('change', () => {
         const w = depOf(R, selEl); w[+inp.dataset.i] = parseFloat(String(inp.value).replace(',', '.')) || 0; setDep(selEl, w); }));
       movebox.querySelector('[data-act="zero"]').addEventListener('click', () => setDep(selEl, [0, 0, 0], true, PORTE[selEl] ? aDep(PORTE[selEl]) : undefined, false, PORTE[selEl] ? PORTE[selEl].largeur_plan_m : undefined));
@@ -891,7 +946,7 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
     { const a_ = movebox.querySelector('[data-aimant]'); if (a_) a_.checked = aimant;
       const b1 = movebox.querySelector('[data-act="lar-"]'), b2 = movebox.querySelector('[data-act="lar+"]'); if (b1) { b1.textContent = aimant ? '− 5 cm' : '− 1 cm'; b2.textContent = aimant ? '+ 5 cm' : '+ 1 cm'; } }
     const nt = movebox.querySelector('[data-note]');
-    if (nt) nt.textContent = !door ? 'En mètres depuis la position du plan.' : gardeOf(R, selEl)
+    if (nt) nt.textContent = fen ? 'Position en mètres depuis le plan. À la génération, l’ancienne ouverture est rebouchée et le mur est percé au nouvel endroit. Aucun trou.' : !door ? 'En mètres depuis la position du plan.' : gardeOf(R, selEl)
       ? 'Ouverture : 0° = porte fermée. Le mur garde son ouverture du plan : seule la porte se décale (par exemple dans l’axe du mur).'
       : 'Ouverture : 0° = porte fermée. Position et largeur en mètres. À la génération, le mur suit la porte : l’ancienne ouverture est rebouchée et le mur est percé à la nouvelle position et largeur, côté charnière fixe. Aucun trou.';
   }
@@ -1195,6 +1250,35 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
     }
     if (solTarget && hasOwnSol(solTarget)) d.appendChild(resetBtn());
     groupsEl.appendChild(d);
+  }
+  // ---------- Murs réglés un par un : partie de mur entourée, avec son bas et son haut (muret, mur supprimé, imposte) ----------
+  function renderMursRegles() {
+    const g = document.createElement('div'); g.className = 'group';
+    g.innerHTML = '<h3>Murs réglés un par un</h3>';
+    const p0 = document.createElement('p'); p0.className = 'note'; p0.style.margin = '0 0 8px';
+    p0.textContent = 'Entourez une partie de mur en vue de dessus, puis donnez son bas et son haut (depuis le sol du niveau) : muret, cloison basse, mur supprimé (haut 0), imposte au-dessus d’un passage. Visible à la régénération.';
+    g.appendChild(p0);
+    const ul = document.createElement('ul'); ul.className = 'rooms';
+    mursCfg().forEach(mz => {
+      const l = NIV.indexOf(mz.niveau); if (!lvlShown(l)) return;
+      const li = document.createElement('li'); li.className = 'room'; li.style.gridTemplateColumns = '14px minmax(0,1fr)';
+      li.innerHTML = `<span class="sw" style="background:#3f87c4"></span><div style="display:grid;gap:6px;min-width:0"><input type="text" aria-label="Nom du mur"><div class="steprow"></div></div>`;
+      const nm = li.querySelector('input'); nm.value = mz.nom; nm.addEventListener('input', () => { mz.nom = nm.value; updCount(); });
+      const box = li.querySelector('.steprow');
+      [['bas_m', 'Bas', '0'], ['hauteur_m', 'Haut', 'plafond']].forEach(([k, lab, vide]) => {
+        const w = document.createElement('label'); w.className = 'mini'; w.innerHTML = `<span>${lab}</span><input type="number" step="0.05" min="0" placeholder="${vide}"><em>m</em>`;
+        const i = w.querySelector('input'); i.value = mz[k] ?? '';
+        i.addEventListener('change', () => { const t = i.value.trim().replace(',', '.'); if (t === '') mz[k] = null; else { const v = parseFloat(t); if (isNaN(v) || v < 0) return; mz[k] = v; } updCount(); });
+        box.appendChild(w); });
+      const del = document.createElement('button'); del.className = 'link'; del.textContent = 'Supprimer le réglage';
+      del.addEventListener('click', () => { const L = mursCfg(); L.splice(L.indexOf(mz), 1); buildMurs(); updCount(); render(); }); box.appendChild(del);
+      ul.appendChild(li);
+    });
+    if (!ul.children.length) { const e = document.createElement('p'); e.className = 'empty'; e.style.margin = '0'; e.textContent = 'Aucun mur réglé sur ce niveau : tous les murs vont du sol au plafond.'; g.appendChild(e); }
+    g.appendChild(ul);
+    const b = document.createElement('button'); b.className = 'btn'; b.style.marginTop = '10px'; b.textContent = 'Régler une partie de mur';
+    b.addEventListener('click', () => startDraw('mur')); g.appendChild(b);
+    groupsEl.appendChild(g);
   }
   function renderZones() {
     const g = document.createElement('div'); g.className = 'group';
@@ -1521,6 +1605,7 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
     g1.appendChild(lien('Calques d’élévation', 'calques', 'Début du nom, par exemple « Élévation ». Vide : tout ce qui est sur ces pages.'));
     groupsEl.appendChild(g1);
     if (!ELEV.length) return;
+    renderLectures();
     const g2 = document.createElement('div'); g2.className = 'group'; g2.innerHTML = '<h3>Mesure</h3>';
     const ai = document.createElement('label'); ai.className = 'note'; ai.style.cssText = 'display:flex;gap:6px;align-items:center';
     ai.innerHTML = '<input type="checkbox"> Magnétisme : accroche aux traits du dessin'; const aic = ai.querySelector('input'); aic.checked = EV.aimant;
@@ -1555,6 +1640,99 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
         li.appendChild(x); ul.appendChild(li); });
       g3.appendChild(ul); groupsEl.appendChild(g3); }
   }
+  // ---------- Lecture automatique des coupes : hauteurs, voûtes, marches, à appliquer d'un clic ----------
+  const largeurPiece = r => {      // plus petite largeur de la pièce (toutes directions, pas de 5°)
+    const pts = r.contours.flatMap(c => c.ext); let best = Infinity;
+    for (let a = 0; a < 180; a += 5) { const c = Math.cos(a * Math.PI / 180), s_ = Math.sin(a * Math.PI / 180); let lo = Infinity, hi = -Infinity;
+      pts.forEach(([x, z]) => { const v = x * c + z * s_; lo = Math.min(lo, v); hi = Math.max(hi, v); }); best = Math.min(best, hi - lo); }
+    return best; };
+  function renderLectures() {
+    const sh = ELEV[EV.i] || {}, L = sh.lectures || [];
+    const g = document.createElement('div'); g.className = 'group'; g.innerHTML = '<h3>Lu automatiquement sur cette planche</h3>';
+    if (!L.length) { g.insertAdjacentHTML('beforeend', '<p class="note" style="margin:0">Aucune coupe reconnue. Une coupe se lit quand les murs et dalles coupés sont des aplats gris ; une voûte ou un plafond en pente, quand son trait va d’un mur à l’autre.</p>'); groupsEl.appendChild(g); return; }
+    g.insertAdjacentHTML('beforeend', '<p class="note" style="margin:0 0 8px">Hauteurs mesurées depuis le sol dessiné ; une cote écrite à côté (« 282 cm ») remplace la mesure quand elle est proche. Choisissez la pièce, puis appliquez.</p>');
+    const vivantes = rooms.filter(r => !gone(r));
+    L.forEach(c => {
+      const voute = c.forme !== 'plat', li = document.createElement('div'); li.className = 'field'; li.style.display = 'block';
+      const fm = v => fmtM(v), forme = { plat: 'plafond plat', voute_berceau: 'voûte', cathedrale: 'plafond cathédrale' }[c.forme] || c.forme;
+      li.innerHTML = `<div><b>${escH(c.nom)}</b> · ${forme}, largeur ${fm(c.largeur_m)} · ${voute ? `naissance ${fm(c.hauteur_naissance_m)}, clé ${fm(c.hauteur_cle_m)}` : `hauteur ${fm(c.hauteur_m)}`}${c.cotes_lues ? ' <span class="chip plan">cote lue</span>' : ''}${c.marches ? ` · sol : ${fm(c.marches.denivele_m)} de dénivelé` : ''}</div>
+        <div class="row" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px"><select aria-label="Appliquer à"></select><button class="btn ghost">Appliquer</button></div><p class="note" style="margin:4px 0 0"></p>`;
+      const sel = li.querySelector('select'), b = li.querySelector('button'), msg = li.querySelector('.note');
+      const proches = vivantes.slice().sort((a, b_) => Math.abs(largeurPiece(a) - c.largeur_m) - Math.abs(largeurPiece(b_) - c.largeur_m));
+      const opts = (voute ? [] : NIVS.map((n, k) => ['n' + k, 'Hauteur du niveau ' + n.nom])).concat(proches.map(r => ['p' + rooms.indexOf(r), (voute ? 'Voûte de ' : 'Hauteur de ') + roomName(r) + ` (${NIV[r.lvl]}, largeur ${fm(largeurPiece(r))})`]));
+      sel.innerHTML = opts.map(([v, t]) => `<option value="${v}">${escH(t)}</option>`).join('');
+      if (!voute) { const k = NIVS.reduce((a, n, i) => Math.abs(n.hauteur_sous_plafond_m - c.hauteur_m) < Math.abs(NIVS[a].hauteur_sous_plafond_m - c.hauteur_m) ? i : a, 0); sel.value = 'n' + k; }
+      b.addEventListener('click', () => {
+        const v = sel.value;
+        if (v[0] === 'n') { const p_ = I.concat('niveaux', +v.slice(1), 'hauteur_sous_plafond_m'), avant = get(R, p_); set(R, p_, c.hauteur_m);
+          ensureElev().mesures.push({ cible: p_, libelle: 'Hauteur sous plafond, ' + NIVS[+v.slice(1)].nom, valeur_m: c.hauteur_m, avant_m: avant, page: sh.page, lecture: c.nom });
+          msg.textContent = `Hauteur du niveau : ${fm(avant)} → ${fm(c.hauteur_m)}`; }
+        else { const r = rooms[+v.slice(1)];
+          if (!voute) { ensureEntry(r).hauteur_sous_plafond_m = c.hauteur_m; msg.textContent = `${roomName(r)} : hauteur ${fm(c.hauteur_m)}`; }
+          else { const L_ = plafondsCfg(), e0 = L_.find(e => pieceDe(e) === r);
+            const e = e0 || { niveau: NIV[r.lvl], nom: (c.forme === 'cathedrale' ? 'plafond cathédrale ' : 'voûte ') + roomName(r), piece_plan_pt: pointDe(r), axe_deg: null };
+            Object.assign(e, { forme: c.forme, hauteur_naissance_m: c.hauteur_naissance_m, hauteur_cle_m: c.hauteur_cle_m, lu_sur: `${sh.nom}, ${c.nom}` }); if (!e0) L_.push(e);
+            msg.textContent = `${roomName(r)} : ${forme} ${fm(c.hauteur_naissance_m)} / ${fm(c.hauteur_cle_m)}${e0 ? ' (voûte existante mise à jour)' : ''}. Visible à la régénération.`; } }
+        updCount(); });
+      g.appendChild(li);
+    });
+    groupsEl.appendChild(g);
+  }
+  // ---------- Photos du chantier : texture ou couleur d'une surface, tirée d'un cadre sur la photo ----------
+  const PH = { liste: null, sel: null, cadre: null, cible: 'murs', taille: 1.0 };
+  const SURF = { murs: 'Murs', plafond: 'Plafonds et voûtes', portes: 'Portes', sol: 'Sol (toutes les pièces)' };
+  const photoDe = cible => cible[0] === 'p' ? ((rooms[+cible.slice(1)] || {}).entry || {}).sol?.photo : (get(R, MA.concat(cible)) || {}).photo;
+  function renderPhotos() {
+    const g = document.createElement('div'); g.className = 'group'; g.innerHTML = '<h3>Photos du chantier</h3>';
+    if (!APP || !APP.photos) { g.insertAdjacentHTML('beforeend', '<p class="note">Les photos s’ajoutent dans le logiciel Atelier 3D (elles sont copiées dans le dossier du projet).</p>'); groupsEl.appendChild(g); return; }
+    if (PH.liste === null) { APP.photos().then(l => { PH.liste = l || []; render(); }); g.insertAdjacentHTML('beforeend', '<p class="note">Chargement…</p>'); groupsEl.appendChild(g); return; }
+    const add = document.createElement('button'); add.className = 'btn'; add.textContent = 'Ajouter des photos…';
+    add.addEventListener('click', async () => { PH.liste = await APP.ajouterPhotos() || []; render(); }); g.appendChild(add);
+    if (!PH.liste.length) g.insertAdjacentHTML('beforeend', '<p class="note" style="margin:8px 0 0">Aucune photo. Photographiez les murs, sols et plafonds bien en face, à la lumière du jour.</p>');
+    const grid = document.createElement('div'); grid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:6px;margin-top:10px';
+    PH.liste.forEach(ph => { const b = document.createElement('button'); b.className = 'btn ghost'; b.style.cssText = 'padding:2px;height:72px;overflow:hidden' + (PH.sel === ph.fichier ? ';outline:2px solid var(--accent)' : '');
+      b.title = ph.fichier; b.innerHTML = `<img src="${ph.url}" alt="${escH(ph.fichier)}" style="width:100%;height:100%;object-fit:cover">`;
+      b.addEventListener('click', () => { PH.sel = ph.fichier; PH.cadre = null; render(); }); grid.appendChild(b); });
+    g.appendChild(grid); groupsEl.appendChild(g);
+    const ph = PH.liste.find(x => x.fichier === PH.sel);
+    if (ph) {
+      const g2 = document.createElement('div'); g2.className = 'group'; g2.innerHTML = `<h3>${escH(ph.fichier)}</h3><p class="note" style="margin:0 0 6px">Glissez sur la photo pour encadrer un morceau bien de face (un carreau ou deux, un pan de mur sans meuble).</p>`;
+      const box = document.createElement('div'); box.style.cssText = 'position:relative;overflow:hidden;border-radius:4px;user-select:none;touch-action:none;cursor:crosshair';
+      box.innerHTML = `<img src="${ph.url}" alt="" draggable="false" style="width:100%;display:block;border-radius:4px"><div data-cadre style="position:absolute;border:2px solid #fff;outline:1px solid #000;box-shadow:0 0 0 9999px rgba(0,0,0,.35);display:none"></div>`;
+      const cd = box.querySelector('[data-cadre]');
+      const montrer = () => { const c = PH.cadre; cd.style.display = c ? 'block' : 'none'; if (c) Object.assign(cd.style, { left: c[0] * 100 + '%', top: c[1] * 100 + '%', width: (c[2] - c[0]) * 100 + '%', height: (c[3] - c[1]) * 100 + '%' }); };
+      let p0 = null; const rel = e => { const r = box.getBoundingClientRect(); return [Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), Math.min(1, Math.max(0, (e.clientY - r.top) / r.height))]; };
+      box.addEventListener('pointerdown', e => { p0 = rel(e); box.setPointerCapture(e.pointerId); });
+      box.addEventListener('pointermove', e => { if (!p0) return; const p1 = rel(e); PH.cadre = [Math.min(p0[0], p1[0]), Math.min(p0[1], p1[1]), Math.max(p0[0], p1[0]), Math.max(p0[1], p1[1])].map(v => Math.round(v * 1000) / 1000); montrer(); });
+      box.addEventListener('pointerup', () => { p0 = null; render(); });
+      g2.appendChild(box); montrer();
+      const opts = Object.entries(SURF).concat(rooms.filter(r => !gone(r)).map(r => ['p' + rooms.indexOf(r), 'Sol de ' + roomName(r) + ' (' + NIV[r.lvl] + ')']));
+      const ctl = document.createElement('div'); ctl.style.cssText = 'display:grid;gap:8px;margin-top:10px';
+      ctl.innerHTML = `<label class="mini"><span>Surface</span><select>${opts.map(([v, t]) => `<option value="${v}">${escH(t)}</option>`).join('')}</select></label>
+        <label class="mini"><span>Taille réelle du cadre</span><input type="number" step="0.05" min="0.05" value="${PH.taille}"><em>m</em></label>
+        <div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn" data-m="texture">Utiliser comme texture</button><button class="btn ghost" data-m="couleur">Prendre seulement la couleur</button></div>
+        <p class="note" data-msg style="margin:0">${PH.cadre ? '' : 'Encadrez d’abord un morceau de la photo.'}</p>`;
+      const sel = ctl.querySelector('select'), tai = ctl.querySelector('input'), msg = ctl.querySelector('[data-msg]'); sel.value = PH.cible;
+      sel.addEventListener('change', () => { PH.cible = sel.value; }); tai.addEventListener('change', () => { const v = parseFloat(tai.value.replace(',', '.')); if (v > 0) PH.taille = v; });
+      ctl.querySelectorAll('[data-m]').forEach(b => b.addEventListener('click', () => {
+        if (!PH.cadre) { msg.textContent = 'Encadrez d’abord un morceau de la photo.'; return; }
+        const val = { fichier: ph.fichier, cadre: PH.cadre, taille_m: PH.taille, mode: b.dataset.m };
+        if (PH.cible[0] === 'p') { const e = ensureEntry(rooms[+PH.cible.slice(1)]); e.sol = e.sol || {}; e.sol.photo = val; }
+        else { const p_ = MA.concat(PH.cible); if (!get(R, p_)) set(R, p_, {}); get(R, p_).photo = val; }
+        msg.textContent = (b.dataset.m === 'texture' ? 'Texture' : 'Couleur') + ' de « ' + sel.options[sel.selectedIndex].text + ' » prise sur la photo. Visible à la régénération.'; updCount(); render(); }));
+      g2.appendChild(ctl); groupsEl.appendChild(g2);
+    }
+    const g3 = document.createElement('div'); g3.className = 'group'; g3.innerHTML = '<h3>Surfaces tirées des photos</h3>';
+    const ul = document.createElement('ul'); ul.className = 'mlist';
+    Object.keys(SURF).map(k => [k, SURF[k]]).concat(rooms.filter(r => !gone(r)).map(r => ['p' + rooms.indexOf(r), 'Sol de ' + roomName(r)])).forEach(([k, t]) => {
+      const v = photoDe(k); if (!v) return;
+      const li = document.createElement('li'); li.innerHTML = `<span>${escH(t)} : ${v.mode === 'couleur' ? 'couleur' : 'texture'} de <b>${escH(v.fichier)}</b>${v.mode === 'couleur' ? '' : `, motif ${fmtM(v.taille_m)}`}</span>`;
+      const x = document.createElement('button'); x.className = 'btn ghost'; x.textContent = 'Retirer';
+      x.addEventListener('click', () => { if (k[0] === 'p') delete rooms[+k.slice(1)].entry.sol.photo; else delete get(R, MA.concat(k)).photo; updCount(); render(); });
+      li.appendChild(x); ul.appendChild(li); });
+    if (!ul.children.length) g3.insertAdjacentHTML('beforeend', '<p class="empty" style="margin:0">Aucune pour l’instant : les surfaces gardent les couleurs de l’étape « Sols, murs et plafonds ».</p>');
+    g3.appendChild(ul); groupsEl.appendChild(g3);
+  }
   function ensureElev() { const imp = get(R, I); imp.elevations = imp.elevations || {}; const e = imp.elevations; e.pages = e.pages || []; e.calques = e.calques || []; e.mesures = e.mesures || []; return e; }
   const luElev = path => mesuresR().some(m => same(m.cible, path) && same(get(R, path), m.valeur_m));
 
@@ -1565,10 +1743,11 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
     groupsEl.innerHTML = '';
     if (s.zones) renderZones();
     if (s.lintels) renderLintels();
-    if (s.plafonds) { renderHauteursPieces(); renderPlafonds(); }
+    if (s.plafonds) { renderHauteursPieces(); renderPlafonds(); renderMursRegles(); }
     if (s.rooms) renderRooms();
     if (s.sol) renderSol();
     if (s.elev) renderElev();
+    if (s.photos) renderPhotos();
     elevView.hidden = current !== 'elevations'; if (!elevView.hidden) elevDraw();
     (s.groups || []).forEach(g => { const fs_ = g.f.filter(present); if (!fs_.length) return;
       const d = document.createElement('div'); d.className = 'group'; d.innerHTML = `<h3>${g.h}</h3>`; fs_.forEach(f => d.appendChild(field(f))); groupsEl.appendChild(d); });

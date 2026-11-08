@@ -279,6 +279,28 @@ ipcMain.handle('ouvrir', (_e, d) => d ? ouvrirProjet(d) : choisirEtOuvrir());
 ipcMain.handle('nouveau', (_e, nom) => nouveauProjet(nom));
 ipcMain.handle('parametres', (_e, p) => { const cur = lireParams();
   if (p.blender && p.blender.endsWith('.app')) p.blender = path.join(p.blender, 'Contents', 'MacOS', 'Blender'); Object.assign(cur, p); ecrireParams(cur); return { python: verifierPython(), config: config() }; });
+// ---------- photos du chantier : copiées dans le dossier du projet (photos/), utilisées pour les textures et les couleurs ----------
+function listePhotos() {
+  if (!projet) return [];
+  const d = path.join(projet.dossier, 'photos');
+  if (!fs.existsSync(d)) return [];
+  return fs.readdirSync(d).filter(f => /\.(jpe?g|png|webp)$/i.test(f)).sort()
+    .map(f => ({ fichier: f, url: require('url').pathToFileURL(path.join(d, f)).href }));
+}
+ipcMain.handle('photos', () => listePhotos());
+ipcMain.handle('ajouter-photos', async () => {
+  if (!projet) return [];
+  const r = await dialog.showOpenDialog(win, { title: 'Ajouter des photos du chantier', properties: ['openFile', 'multiSelections'],
+    filters: [{ name: 'Photos', extensions: ['jpg', 'jpeg', 'png', 'webp'] }] });
+  if (r.canceled) return listePhotos();
+  const d = path.join(projet.dossier, 'photos'); fs.mkdirSync(d, { recursive: true });
+  for (const f of r.filePaths) {
+    let nom = path.basename(f).replace(/[^\w.\- ]+/g, '_'), k = 1;
+    while (fs.existsSync(path.join(d, nom))) nom = path.basename(f).replace(/(\.\w+)$/, `-${++k}$1`);
+    fs.copyFileSync(f, path.join(d, nom));
+  }
+  return listePhotos();
+});
 ipcMain.handle('choisir-fichier', async (_e, titre) => {
   const r = await dialog.showOpenDialog(win, { title: titre, properties: ['openFile'] });
   return r.canceled ? '' : r.filePaths[0];

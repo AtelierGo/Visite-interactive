@@ -13,6 +13,7 @@ CALQUES = [   # cle du reglage, mots reconnus dans le nom du calque (sans accent
     ('murs', [r'^mur', r'\bmurs?\b', r'^wall']),
     ('portes_coulissantes', [r'coulissant', r'galandage', r'sliding']),
     ('portes', [r'^porte', r'\bportes?\b', r'^door']),
+    ('fenetres', [r'fenetre', r'window', r'^baie', r'chassis']),
     ('escalier_helicoidal', [r'spiral', r'colima', r'helico']),
     ('placards', [r'placard', r'rangement', r'dressing']),
     ('mobilier', [r'mobilier', r'furniture', r'meuble']),
@@ -63,7 +64,7 @@ def analyser(src, nom_projet=None):
             cal['murs'] = nom_court(max(pleins, key=pleins.get))
             verifier.append(['Calque des murs', f'Aucun calque « Murs » : « {cal["murs"]} » est pris pour les murs (le plus de surfaces pleines).', 'import'])
         else: sys.exit('ERREUR : aucun calque de murs (surfaces pleines) dans ce fichier.')
-    for cle, defaut in (('portes', 'Porte'), ('portes_coulissantes', 'Porte coulissante'), ('escalier_helicoidal', 'Escalier hélicoïdal'),
+    for cle, defaut in (('portes', 'Porte'), ('fenetres', 'Fenêtre'), ('portes_coulissantes', 'Porte coulissante'), ('escalier_helicoidal', 'Escalier hélicoïdal'),
                         ('placards', 'Placards'), ('mobilier', 'Mobilier')):
         cal.setdefault(cle, defaut)
 
@@ -110,11 +111,11 @@ def analyser(src, nom_projet=None):
                                            couper_aux_changements_de_niveau=True, separations=[], liste=[]),
                                zones_exclues=[], elevations=dict(pages=[], calques=[], mesures=[])),
         'etape_2_murs': dict(epaisseur_dalle_m=0.2, hauteur_linteau_m=2.1, linteaux_ouverture_max_m=1.1, linteaux_marge_portes_m=0.15,
-                             emprise_fermeture_m=2.0, ajuster_niveaux_aux_pieces=True, changements_de_niveau=[], nettoyage_bandes_etroites_m=0.2, poteaux=[], plafonds=[],
+                             emprise_fermeture_m=2.0, ajuster_niveaux_aux_pieces=True, murs_regles=[], changements_de_niveau=[], nettoyage_bandes_etroites_m=0.2, poteaux=[], plafonds=[],
                              linteaux_ajustes=[], linteaux_traces=[], epaisseur_max_ouverture_m=0.8),
         'etape_3_ouvertures_escaliers': dict(portes=dict(hauteur_vantail_m=2.04, epaisseur_vantail_m=0.04, longueur_min_trait_pt=25, vantaux_vitres_plan_pt=[],
                                                          fermees_au_depart=True, ajuster_dans_ouverture=True, recouvrement_tableaux_m=0.002),
-                                             vitrines=[], deplacements={}),
+                                             fenetres=dict(allege_m=0.9, regroupement_traits_m=0.12, haut_m=None, epaisseur_chassis_m=0.06, largeur_cadre_m=0.05), vitrines=[], deplacements={}),
         'etape_4_materiaux': dict(
             murs=dict(couleur=[244, 243, 240], rugosite=0.9),
             sol=dict(type='carrelage', taille_carreau_m=0.6, couleur=gris(190), couleur_joint=gris(160), largeur_joint_mm=3,

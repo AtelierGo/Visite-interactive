@@ -16,6 +16,31 @@ def load(path):
     return R, m
 
 
+def texture_photo(dossier, ph, nom, px=1024):
+    """Texture tiree d'une photo du chantier : cadre choisi dans l'editeur (0-1), rendu raccordable (bords qui se suivent)."""
+    import os
+    from PIL import ImageOps
+    im = ImageOps.exif_transpose(Image.open(os.path.join(dossier, 'photos', ph['fichier']))).convert('RGB')
+    W, H = im.size; x0, y0, x1, y1 = ph.get('cadre') or [0, 0, 1, 1]
+    im = im.crop((int(x0 * W), int(y0 * H), max(int(x1 * W), int(x0 * W) + 8), max(int(y1 * H), int(y0 * H) + 8))).resize((px, px), Image.LANCZOS)
+    a = np.asarray(im, np.float32); b = np.roll(a, (px // 2, px // 2), (0, 1))
+    u = np.minimum(np.arange(px), px - 1 - np.arange(px)) / (px / 2)              # 0 au bord, 1 au milieu
+    w = np.clip(np.minimum.outer(u, u) * 2.2, 0, 1)[:, :, None]
+    out = Image.fromarray(np.clip(a * w + b * (1 - w), 0, 255).astype(np.uint8))
+    out.save(f'photo_{nom}.png'); print(f'  texture {nom} : photo {ph["fichier"]}, motif de {ph.get("taille_m", 1.0):.2f} m')
+    return out
+
+
+def couleur_photo(dossier, ph):
+    """Couleur moyenne du cadre choisi sur une photo (mode « couleur » : la surface prend la teinte, sans texture)."""
+    import os
+    from PIL import ImageOps
+    im = ImageOps.exif_transpose(Image.open(os.path.join(dossier, 'photos', ph['fichier']))).convert('RGB')
+    W, H = im.size; x0, y0, x1, y1 = ph.get('cadre') or [0, 0, 1, 1]
+    a = np.asarray(im.crop((int(x0 * W), int(y0 * H), max(int(x1 * W), int(x0 * W) + 2), max(int(y1 * H), int(y0 * H) + 2))).resize((64, 64)), np.float32)
+    return [int(round(v)) for v in np.median(a.reshape(-1, 3), axis=0)]
+
+
 def pbr(name, c, tex=None, blend=False):
     rgba = P.lin(list(c['couleur']) + [255])
     if blend: rgba = rgba[:3] + [c.get('opacite', 1.0)]
@@ -99,6 +124,15 @@ def main(src, dst, cfg='reglages.json'):
         print('decalage %s -> %s : %.2f m, %.2f m' % (niveaux[i]['nom'], niveaux[0]['nom'], s[0] * M, s[1] * M))
 
     tiles = 2
+    import os
+    DOSSIER = os.path.dirname(os.path.abspath(src))
+    def appliquer_couleurs(c, nom):     # photo en mode « couleur » : la teinte de la photo remplace la couleur reglee
+        ph = (c or {}).get('photo')
+        if ph and ph.get('fichier') and ph.get('mode') == 'couleur':
+            try: c['couleur'] = couleur_photo(DOSSIER, ph); print(f"  couleur {nom} tiree de la photo {ph['fichier']} : {c['couleur']}")
+            except (OSError, ValueError) as e: print(f'  photo de {nom} illisible : {e}')
+    for k_ in ('murs', 'plafond', 'portes', 'sol'): appliquer_couleurs(mat.get(k_), k_)
+    for e_ in imp.get('pieces', {}).get('liste', []): appliquer_couleurs(e_.get('sol'), 'sol ' + str(e_.get('nom')))
     def sol_of(over):        # reglages de sol : generaux, completes par ceux de la piece
         d = dict(sol); d.update({k: v for k, v in (over or {}).items() if v is not None}); return d
     def joint_px(d, px=1024):  # largeur du joint en mm -> pixels de la texture (2 x 2 carreaux)
@@ -106,12 +140,19 @@ def main(src, dst, cfg='reglages.json'):
     S.tile_texture('carrelage.png', px=1024, tiles=tiles, joint=joint_px(sol), color=sol['couleur'], joint_color=sol['couleur_joint'])
     md = dict(sol_of(None), **mat.get('marches', {}))     # carrelage des marches : propre, sinon celui du sol
     S.tile_texture('carrelage_marches.png', px=1024, tiles=tiles, joint=joint_px(md), color=md['couleur'], joint_color=md['couleur_joint'])
-    mats = dict(murs=pbr('murs', mat['murs']), sol=pbr('carrelage', sol, Image.open('carrelage.png')),
+    def photo_de(c, nom):       # reglage photo d'une surface : (texture, reglages d'UV) ou (None, None)
+        ph = (c or {}).get('photo')
+        if not ph or not ph.get('fichier') or ph.get('mode') == 'couleur': return None, None
+        try: return texture_photo(DOSSIER, ph, nom), dict(taille_carreau_m=float(ph.get('taille_m') or 1.0) / tiles, decalage_x_m=ph.get('decalage_x_m', 0), decalage_y_m=ph.get('decalage_y_m', 0))
+        except (OSError, ValueError) as e: print(f'  photo de {nom} illisible : {e}'); return None, None
+    TX = {k: photo_de(mat.get(k), k) for k in ('murs', 'plafond', 'portes')}
+    tx_sol, uv_sol = photo_de(sol, 'sol')
+    mats = dict(murs=pbr('murs', mat['murs'], TX['murs'][0]), sol=pbr('carrelage', sol, tx_sol or Image.open('carrelage.png')),
                 marches=pbr('carrelage marches', dict(md, nom='carrelage marches'), Image.open('carrelage_marches.png')),
-                plinthes=pbr('plinthes', pl), dalle=pbr('plafond', mat['plafond']), escalier=pbr('escalier', mat['escalier_droit']),
-                voute=trimesh.visual.material.PBRMaterial(name='plafond voute', baseColorFactor=P.lin(list(mat['plafond']['couleur']) + [255]),
-                    roughnessFactor=mat['plafond'].get('rugosite', 0.95), metallicFactor=0.0, doubleSided=True),
-                porte=pbr('portes', mat['portes']), lum=pbr('luminaires', mat['luminaires']), rail=pbr('rails', mat['rails']), placard=pbr('placards', mat['placards']), chassis=pbr('chassis', mat['chassis']), verre=pbr('verre', mat['verre'], blend=True),
+                plinthes=pbr('plinthes', pl), dalle=pbr('plafond', mat['plafond'], TX['plafond'][0]), escalier=pbr('escalier', mat['escalier_droit']),
+                voute=trimesh.visual.material.PBRMaterial(name='plafond voute', baseColorFactor=P.lin(list(mat['plafond']['couleur']) + [255]) if TX['plafond'][0] is None else [255, 255, 255, 255],
+                    baseColorTexture=TX['plafond'][0], roughnessFactor=mat['plafond'].get('rugosite', 0.95), metallicFactor=0.0, doubleSided=True),
+                porte=pbr('portes', mat['portes'], TX['portes'][0]), lum=pbr('luminaires', mat['luminaires']), rail=pbr('rails', mat['rails']), placard=pbr('placards', mat['placards']), chassis=pbr('chassis', mat['chassis']), verre=pbr('verre', mat['verre'], blend=True),
                 bois=pbr('bois', mat['bois']), acier=pbr('acier', mat['acier']), tole=pbr('tole perforee', mat['tole_perforee'], blend=True))
 
     lo = hi = None; spiral_xy = None; tremie = P.Polygon()
@@ -323,6 +364,42 @@ def main(src, dst, cfg='reglages.json'):
             extra_lintels = [(g_.difference(gap.buffer(0.03)), h_) for g_, h_ in extra_lintels] + [(ng, LINTEL + ddz)]
             if ddz > 0: alleges.append((ng, ddz))           # porte ou fenetre surelevee : mur plein en dessous
             print(f'  porte {k} deplacee de ({ddx:.2f}, {ddy:.2f}, {ddz:.2f}) m, ouverture deplacee avec')
+        # fenetres (calque Fenetres) : trait ou rectangle pose sur le mur. Le mur est perce entre l'allege et le haut,
+        # plein en dessous et au-dessus ; chassis et vitrage dans l'axe du mur. Chaque fenetre se deplace et se regle seule.
+        fcfg = esc.get('fenetres', {}); fen_out = []
+        if cal.get('fenetres'):
+            def traits(d):     # chaque trait du dessin (lignes, courbes, rectangles) en metres
+                out_ = []
+                for it in d['items']:
+                    q = [it[1], it[2]] if it[0] == 'l' else ([it[1], it[2], it[3], it[4]] if it[0] == 'c' else
+                         ([it[1].tl, it[1].tr, it[1].br, it[1].bl, it[1].tl] if it[0] == 're' else ([it[1].ul, it[1].ur, it[1].lr, it[1].ll, it[1].ul] if it[0] == 'qu' else [])))
+                    if len(q) >= 2: out_.append(LineString([(p_.x * M, -p_.y * M) for p_ in q]))
+                return out_
+            pts_f = [t_ for d in page.get_drawings() if d.get('layer', '').startswith(cal['fenetres']) for t_ in traits(d)]
+            for k, g in enumerate(sorted(P.polys(unary_union([mv(q_.buffer(fcfg.get('regroupement_traits_m', 0.12))) for q_ in pts_f if not q_.is_empty]) if pts_f else P.Polygon()), key=lambda q: (q.centroid.x, q.centroid.y))):
+                el = f'{n}_fenetre_{k}'; d_ = DEP.get(el) or {}; ddx, ddy, ddz = deplacement(el)
+                mr = g.minimum_rotated_rectangle; c_ = list(mr.exterior.coords)
+                e_ = max([(c_[j], c_[j + 1]) for j in range(2)], key=lambda e: math.dist(*e))
+                bf = fcfg.get('regroupement_traits_m', 0.12); lw = math.dist(*e_) - 2 * bf; ux, uy = (e_[1][0] - e_[0][0]) / (lw + 2 * bf), (e_[1][1] - e_[0][1]) / (lw + 2 * bf)
+                cx_, cy_ = g.centroid.x, g.centroid.y
+                lw = float(d_.get('largeur_fenetre_m') or lw)
+                band = affinity.rotate(box(cx_ - lw / 2, cy_ - r_ep, cx_ + lw / 2, cy_ + r_ep), math.atan2(uy, ux), origin=(cx_, cy_), use_radians=True)
+                F = W.intersection(band.buffer(0.03)).convex_hull.intersection(band).buffer(-0.003).buffer(0.003)
+                if F.is_empty or F.area < 0.01: print(f'  fenetre {k} : aucun mur sous le trait, ignoree'); continue
+                Fm = affinity.translate(F, ddx, ddy)
+                W = W.union(F).difference(Fm.buffer(0.001)) if (ddx or ddy) else W.difference(F.buffer(0.001))
+                al = float(d_['allege_m']) if d_.get('allege_m') is not None else fcfg.get('allege_m', 0.9)
+                ht = float(d_['haut_m']) if d_.get('haut_m') is not None else (fcfg.get('haut_m') or LINTEL)
+                al, ht = al + ddz, ht + ddz
+                alleges.append((Fm, al)); extra_lintels.append((Fm, ht))
+                # axe du mur dans l'ouverture : chassis (cadre) et vitrage
+                axe = affinity.translate(LineString([(cx_ - ux * 10, cy_ - uy * 10), (cx_ + ux * 10, cy_ + uy * 10)]), ddx, ddy)
+                ep = fcfg.get('epaisseur_chassis_m', 0.06); cad = fcfg.get('largeur_cadre_m', 0.05)
+                vit = Fm.intersection(axe.buffer(ep / 2, cap_style='flat'))
+                inner = vit.intersection(affinity.translate(LineString([(cx_ - ux * (lw / 2 - cad), cy_ - uy * (lw / 2 - cad)), (cx_ + ux * (lw / 2 - cad), cy_ + uy * (lw / 2 - cad))]), ddx, ddy).buffer(ep, cap_style='flat'))
+                cadre = P.extrude(vit, z + al, cad, None) + P.extrude(vit, z + ht - cad, cad, None) + P.extrude(vit.difference(inner), z + al, ht - al, None)
+                fen_out.append((el, cadre, P.extrude(inner.intersection(axe.buffer(0.006, cap_style='flat')), z + al + cad, ht - al - 2 * cad, None)))
+                print(f'  fenetre {k} : {lw:.2f} m, allege {al:.2f} m, haut {ht:.2f} m' + (f', deplacee de ({ddx:.2f}, {ddy:.2f}) m' if ddx or ddy else ''))
         big = W0.buffer(FOOT, join_style='mitre').buffer(-FOOT, join_style='mitre')
         outline = unary_union([P.Polygon(p.exterior) for p in P.polys(big)])
         walls_out.append([r_ for p_ in P.polys(W.simplify(0.005)) for r_ in [p_.exterior] + list(p_.interiors)])   # pour l'accroche de l'editeur
@@ -332,13 +409,23 @@ def main(src, dst, cfg='reglages.json'):
         if not EX.is_empty:
             W, lintels, outline = W.difference(EX), lintels.difference(EX), outline.difference(EX)
             print(f"  zones exclues : {EX.area:.1f} m2")
+        murs_parts = []      # murs reglés un par un (etape Murs) : la partie entouree va de bas_m a hauteur_m (muret, mur supprime, imposte)
+        for mz in [x for x in murs.get('murs_regles', []) if by_name.get(x['niveau'], -1) == i and len(x.get('polygone_plan_pt', [])) >= 3]:
+            zn = P.Polygon([S.pt(x, y, dx, dy) for x, y in mz['polygone_plan_pt']]).buffer(0)
+            part = W.intersection(zn); W = W.difference(zn)
+            bas = float(mz.get('bas_m') or 0); haut = H if mz.get('hauteur_m') is None else min(float(mz['hauteur_m']), H)
+            if haut > bas + 0.005 and not part.is_empty: murs_parts.append((part, bas, haut))
+            print(f"  {mz.get('nom', 'mur')} : {part.area:.2f} m2 de mur, de {bas:.2f} a {haut:.2f} m" + (' (supprime)' if haut <= bas + 0.005 else ''))
         floor = outline.difference(W)
         if i == hi and lo != hi: floor, outline = floor.difference(tremie), outline.difference(tremie)
         plinth = W.buffer(pl['epaisseur_m'], join_style='mitre').difference(W).intersection(floor)
         if not EX.is_empty: extra_lintels = [(g_.difference(EX), h_) for g_, h_ in extra_lintels]
         add(f'{n}_murs', solid(P.extrude(W, z, H, None) + P.extrude(lintels, z + LINTEL, H - LINTEL, None)
                                + [m_ for g_, h_ in extra_lintels for m_ in P.extrude(g_, z + h_, H - h_, None)]
-                               + [m_ for g_, h_ in alleges for m_ in P.extrude(g_, z, h_, None)]), mats['murs'])
+                               + [m_ for g_, h_ in alleges for m_ in P.extrude(g_, z, h_, None)]
+                               + [m_ for g_, b_, h_ in murs_parts for m_ in P.extrude(g_, z + b_, h_ - b_, None)]), mats['murs'], uv=TX['murs'][1], box_uv=bool(TX['murs'][1]))
+        for el, cadre, vitre in fen_out:
+            add(f'{el}__chassis', solid(cadre), mats['chassis']); add(f'{el}__vitrage', solid(vitre), mats['verre'])
         sols, plin, marches_parts = [], [], []      # sols : (forme, z bas, epaisseur), decoupes ensuite par piece
         # zones de sol a hauteur constante : [sol, plinthes, hauteur]. Chaque marche releve la partie qui touche sa ligne, cote haut,
         # a partir de la hauteur de la zone ou elle se trouve (les marches successives se cumulent)
@@ -423,20 +510,23 @@ def main(src, dst, cfg='reglages.json'):
                                       liste_index=r.get('liste_index'), point_plan_pt=r.get('point_plan_pt'), poly=r['poly'], niveau_index=i, supprimee=True))
                 print(f"  piece {k + 1} : {r['nom']} supprimee"); continue
             g = r['poly'].difference(done); done = done.union(r['poly'])
-            d = sol_of(r['sol'])
-            if r['sol']:     # texture propre a la piece
+            d = sol_of(r['sol']); uv_r = dict(d, **uv_sol) if (uv_sol and not r['sol']) else d
+            txp, uvp = photo_de(d, f'sol_{i}_{k}') if (r['sol'] or {}).get('photo') else (None, None)
+            if txp is not None:      # sol de la piece tire d'une photo
+                m_ = pbr(f'sol {niveaux[i]["nom"]} {r["nom"]}', d, txp); uv_r = dict(d, **uvp)
+            elif r['sol']:     # texture propre a la piece
                 fn = f'carrelage_{i}_{k}.png'
                 S.tile_texture(fn, px=1024, tiles=tiles, joint=joint_px(d), color=d['couleur'], joint_color=d['couleur_joint'])
                 m_ = pbr(f'carrelage {niveaux[i]["nom"]} {r["nom"]}', d, Image.open(fn))
             else: m_ = mats['sol']
-            add(f'{n}_sol_p{k}', solid([m2 for f_, z0, h in sols for m2 in P.extrude(f_.intersection(g), z0, h, None)]), m_, uv=d)
+            add(f'{n}_sol_p{k}', solid([m2 for f_, z0, h in sols for m2 in P.extrude(f_.intersection(g), z0, h, None)]), m_, uv=uv_r)
             print(f"  piece {k + 1} : {r['nom']} ({r['type']}, {r['mode']}) {r['poly'].area:.1f} m2")
             rooms_out.append(dict(niveau=niveaux[i]['nom'], index=k, nom=r['nom'], type=r['type'], mode=r['mode'], surface_m2=round(r['poly'].area, 2),
                                   liste_index=r.get('liste_index'), point_plan_pt=r.get('point_plan_pt'), poly=r['poly'], niveau_index=i,
                                   source_nom=r.get('source_nom'), hauteur_sous_plafond_m=r.get('hauteur'), nom_plan=r.get('nom_plan'), couleur_plan=r.get('couleur_plan')))
-        add(f'{n}_sol', solid([m2 for f_, z0, h in sols for m2 in P.extrude(f_.difference(done), z0, h, None)]), mats['sol'], uv=sol)
+        add(f'{n}_sol', solid([m2 for f_, z0, h in sols for m2 in P.extrude(f_.difference(done), z0, h, None)]), mats['sol'], uv=dict(sol, **uv_sol) if uv_sol else sol)
         add(f'{n}_plinthes', solid(plin), mats['plinthes'])
-        add(f'{n}_dalle', solid(P.extrude(outline, z - SLAB, SLAB - 0.02, None)), mats['dalle'])
+        add(f'{n}_dalle', solid(P.extrude(outline, z - SLAB, SLAB - 0.02, None)), mats['dalle'], uv=TX['plafond'][1], box_uv=bool(TX['plafond'][1]))
         for kv, pf in enumerate([p for p in murs.get('plafonds', []) if by_name.get(p['niveau'], -1) == i and p.get('forme') in V.FORMES]):
             pt0 = Point(S.pt(*pf['piece_plan_pt'], dx, dy))
             # la piece de l'etape Pieces qui contient le point, sinon l'espace ferme par les murs
@@ -449,7 +539,7 @@ def main(src, dst, cfg='reglages.json'):
             room = max(P.polys(room), key=lambda q: q.area)
             vb = V.Voute(room, pf['hauteur_naissance_m'], pf['hauteur_cle_m'], pf.get('axe_deg'), pf['forme'], pf.get('travees'))
             vaults.setdefault(i, []).append(vb)
-            add(f'{n}_voute' + (f'_{kv}' if kv else ''), vb.mesh(z, tremie if i == lo and lo != hi else None), mats['voute'])
+            add(f'{n}_voute' + (f'_{kv}' if kv else ''), vb.mesh(z, tremie if i == lo and lo != hi else None), mats['voute'], uv=TX['plafond'][1])
             print(f"  {pf.get('nom')} ({vb.forme}) : portee {2 * vb.a:.2f} m, axe {vb.theta:.0f} deg, naissance {vb.n:.2f} m, cle {vb.n + vb.f:.2f} m")
         hroom = []       # pieces a hauteur propre (hors voutes) : faux plafond de leur hauteur jusqu'a celle du niveau
         for k, r in enumerate(rooms):
@@ -457,7 +547,7 @@ def main(src, dst, cfg='reglages.json'):
             if not hr or r['supprimee'] or any(vb.room.intersection(r['poly']).area > 0.5 * r['poly'].area for vb in vaults.get(i, [])): continue
             hroom.append((r['poly'], hr))
             if hr < H - 0.005:
-                add(f'{n}_plafond_p{k}', solid(P.extrude(r['poly'].buffer(0.02).intersection(outline), z + hr, H - hr, None)), mats['dalle'])
+                add(f'{n}_plafond_p{k}', solid(P.extrude(r['poly'].buffer(0.02).intersection(outline), z + hr, H - hr, None)), mats['dalle'], uv=TX['plafond'][1], box_uv=bool(TX['plafond'][1]))
                 print(f"  piece {r['nom']} : plafond a {hr:.2f} m (niveau {H:.2f} m)")
         def plaf(x, y, i=i, H=H, hroom=hroom):     # hauteur sous plafond en un point : voute, piece, sinon niveau
             q = Point(x, y)
@@ -492,7 +582,7 @@ def main(src, dst, cfg='reglages.json'):
                 add(f'{n}_porte_{k}__chassis', solid(P.extrude(l.difference(l.buffer(-0.03)) if l.buffer(-0.03).area > 0 else l, z + sz, hk, None)), mats['chassis'])
                 add(f'{n}_porte_{k}__vitrage', solid(P.extrude(l, z + sz + 0.06, hk - 0.12, None)), mats['verre']); nvi += 1
             else:
-                add(f'{n}_porte_{k}', solid(P.extrude(l, z + sz, hk, None)), mats['porte']); npl += 1
+                add(f'{n}_porte_{k}', solid(P.extrude(l, z + sz, hk, None)), mats['porte'], uv=TX['portes'][1], box_uv=bool(TX['portes'][1])); npl += 1
         fr, gl = [], []
         print(f'  portes : {npl} pleines, {nvi} vitree(s)')
         hint = S.pt(*centers[i][0], dx, dy) if centers[i][0] else (W.centroid.x, W.centroid.y)
@@ -586,7 +676,7 @@ def main(src, dst, cfg='reglages.json'):
 
     for gname, g_ in scene.geometry.items():
         el = gname.split('__')[0]
-        if re.match(r'niveau\d+_porte_\d+$', el): continue
+        if re.match(r'niveau\d+_(porte|fenetre)_\d+$', el): continue     # deja places avec leur ouverture
         t_ = deplacement(el)
         if any(t_): g_.apply_translation(t_); print(f'  {el} deplace de ({t_[0]:.2f}, {t_[1]:.2f}, {t_[2]:.2f}) m')
     scene.apply_transform(trimesh.transformations.rotation_matrix(-np.pi / 2, [1, 0, 0]))

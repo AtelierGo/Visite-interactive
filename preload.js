@@ -10,6 +10,8 @@ contextBridge.exposeInMainWorld('atelier', {
   exporterGLB: () => ipcRenderer.invoke('exporter-glb'),
   ouvrirVisite: () => ipcRenderer.invoke('ouvrir-visite'),
   exporterVisite: () => ipcRenderer.invoke('exporter-visite'),
+  photos: () => ipcRenderer.invoke('photos'),
+  ajouterPhotos: () => ipcRenderer.invoke('ajouter-photos'),
   etat: () => ipcRenderer.sendSync('etat'),
   modifie: n => ipcRenderer.send('modifie', n),
   fournir: f => { fournisseur = f; },
