@@ -287,6 +287,7 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
       groups: [
         { h: 'Hauteurs', f: [
           ...parNiveau('hauteur_sous_plafond_m', n => 'Hauteur sous plafond, ' + n.nom, { type: 'number', step: 0.05, u: 'm', src: 'photo', warn: true }),
+          F(MU.concat('ajuster_niveaux_aux_pieces'), 'Rehausser le niveau à sa pièce la plus haute', { type: 'toggle', def: true, note: 'Hauteurs par pièce : voir plus bas.' }),
           F(MU.concat('epaisseur_dalle_m'), 'Épaisseur de dalle', { type: 'number', step: 0.01, u: 'm' }),
           F(MU.concat('hauteur_linteau_m'), 'Haut des ouvertures', { type: 'number', step: 0.01, u: 'm' }) ] },
         { h: 'Poteaux', f: parListe(MU.concat('poteaux'), (b, e, k) => [F(b.concat('diametre_m'), `Poteau ${k + 1} (${e.niveau}), diamètre`, { type: 'number', step: 0.01, u: 'm', src: 'plan' })]) },
@@ -386,7 +387,7 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
   function applyLevel() {
     if (!model) return;
     model.traverse(o => { if (o.isMesh) o.visible = (level === 'all' || o.name.indexOf('niveau' + level) === 0 || o.name.indexOf('colimacon') >= 0)
-      && (o.name.indexOf('voute') < 0 || (showVault && (view === 'eye' || level === 'all'))); });
+      && (!/voute|_plafond_p/.test(o.name) || (showVault && (view === 'eye' || level === 'all'))); });
     const vis = new THREE.Box3(); model.traverse(o => { if (o.isMesh && o.visible) vis.expandByObject(o); }); box = vis;
     applyOverlay();
   }
@@ -1228,6 +1229,32 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
   const pieceDe = e => { const l = NIV.indexOf(e.niveau); if (l < 0 || !e.piece_plan_pt) return null; const [x, z] = fromPlan(e.piece_plan_pt[0], e.piece_plan_pt[1], l);
     return rooms.find(r => r.lvl === l && !gone(r) && r.contours.some(c => dansPoly(x, z, c.ext) && !(c.trous || []).some(t => dansPoly(x, z, t)))) || null; };
   const pointDe = r => (r.src && r.src.point_plan_pt) ? r.src.point_plan_pt.slice() : toPlan(r.centre[0], r.centre[1], r.lvl);
+  function renderHauteursPieces() {     // hauteur sous plafond propre à chaque pièce ; le niveau suit la plus haute
+    const g = document.createElement('div'); g.className = 'group';
+    g.innerHTML = '<h3>Hauteur sous plafond par pièce</h3>';
+    const p0 = document.createElement('p'); p0.className = 'note'; p0.style.margin = '0 0 8px';
+    p0.textContent = 'Vide : la hauteur du niveau. Une pièce plus haute que son niveau rehausse tout le niveau (murs, dalle, étages au-dessus) ; les autres pièces gardent leur hauteur avec un faux plafond. Une pièce voûtée suit sa voûte.';
+    g.appendChild(p0);
+    const ul = document.createElement('ul'); ul.className = 'rooms';
+    rooms.forEach(r => {
+      if (!lvlShown(r.lvl) || gone(r)) return;
+      const H = NIVS[r.lvl].hauteur_sous_plafond_m, e = r.entry || {};
+      const li = document.createElement('li'); li.className = 'room'; li.style.gridTemplateColumns = '14px minmax(0,1fr) auto';
+      li.innerHTML = `<span class="sw" style="background:${r.color}"></span><span>${escH(roomName(r))}</span>
+        <label class="mini"><input type="number" step="0.05" min="1" max="12" placeholder="${String(H).replace('.', ',')}" aria-label="Hauteur sous plafond de ${escH(roomName(r))}"><em>m</em></label>`;
+      const i = li.querySelector('input'); i.value = e.hauteur_sous_plafond_m ?? ''; i.style.width = '80px';
+      i.addEventListener('change', () => { const t = i.value.trim().replace(',', '.');
+        if (t === '') { if (r.entry) delete r.entry.hauteur_sous_plafond_m; } else { const v = parseFloat(t); if (isNaN(v) || v <= 0) return; ensureEntry(r).hauteur_sous_plafond_m = v; }
+        updCount(); render(); });
+      ul.appendChild(li);
+    });
+    g.appendChild(ul);
+    const hs = rooms.filter(r => lvlShown(r.lvl) && !gone(r) && r.entry && r.entry.hauteur_sous_plafond_m > NIVS[r.lvl].hauteur_sous_plafond_m && murs_ajuste());
+    if (hs.length) { const n = document.createElement('p'); n.className = 'note warn'; n.style.margin = '6px 0 0';
+      n.textContent = 'À la régénération, ' + [...new Set(hs.map(r => NIV[r.lvl]))].join(', ') + ' prendra ' + Math.max(...hs.map(r => r.entry.hauteur_sous_plafond_m)).toString().replace('.', ',') + ' m, la hauteur de sa pièce la plus haute.'; g.appendChild(n); }
+    groupsEl.appendChild(g);
+  }
+  const murs_ajuste = () => (get(R, ['etape_2_murs']) || {}).ajuster_niveaux_aux_pieces !== false;
   function renderPlafonds() {
     const g = document.createElement('div'); g.className = 'group';
     g.innerHTML = '<h3>Plafonds voûtés</h3>';
@@ -1538,7 +1565,7 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
     groupsEl.innerHTML = '';
     if (s.zones) renderZones();
     if (s.lintels) renderLintels();
-    if (s.plafonds) renderPlafonds();
+    if (s.plafonds) { renderHauteursPieces(); renderPlafonds(); }
     if (s.rooms) renderRooms();
     if (s.sol) renderSol();
     if (s.elev) renderElev();

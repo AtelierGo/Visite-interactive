@@ -54,6 +54,16 @@ def main(src, dst, cfg='reglages.json'):
 
     # niveaux empiles dans l'ordre de la liste, le premier a z = 0, les suivants en dessous
     # (TODO editeur : choisir pour chaque niveau s'il est au-dessus ou en dessous du precedent)
+    # hauteur sous plafond par piece (etape Murs et plafonds) : le niveau prend la hauteur de sa piece la plus haute
+    # (murs, dalle et niveaux au-dessus suivent) ; les pieces plus basses recoivent un faux plafond
+    liste_p = imp.get('pieces', {}).get('liste', [])
+    HP = {n['nom']: [e['hauteur_sous_plafond_m'] for e in liste_p if e.get('niveau') == n['nom'] and e.get('hauteur_sous_plafond_m') and not e.get('supprimee')] for n in niveaux}
+    H_REGLE = {n['nom']: n['hauteur_sous_plafond_m'] for n in niveaux}     # hauteur des pieces sans reglage propre
+    if murs.get('ajuster_niveaux_aux_pieces', True):
+        for n in niveaux:
+            if HP[n['nom']] and max(HP[n['nom']]) > n['hauteur_sous_plafond_m'] + 1e-6:
+                print(f"  {n['nom']} : hauteur portee de {n['hauteur_sous_plafond_m']:.2f} a {max(HP[n['nom']]):.2f} m (piece la plus haute)")
+                n['hauteur_sous_plafond_m'] = max(HP[n['nom']])
     Z = [0.0]
     for k, n in enumerate(niveaux[1:], 1):     # position : 'dessous' (sous-sol, defaut historique) ou 'dessus' (etage)
         if n.get('position', 'dessous') == 'dessus': Z.append(Z[-1] + niveaux[k - 1]['hauteur_sous_plafond_m'] + SLAB)
@@ -145,6 +155,7 @@ def main(src, dst, cfg='reglages.json'):
     clean = murs['nettoyage_bandes_etroites_m'] / 2
     vaults = {}
     pcfg_p = imp.get('pieces', {})
+    plafs = {}
     rooms_out = []; walls_out = []; marches_out = []; portes_out = []
     for i, page in enumerate(pages):
         z, H = Z[i], CEIL[i]; dx, dy = shift[i]
@@ -422,7 +433,7 @@ def main(src, dst, cfg='reglages.json'):
             print(f"  piece {k + 1} : {r['nom']} ({r['type']}, {r['mode']}) {r['poly'].area:.1f} m2")
             rooms_out.append(dict(niveau=niveaux[i]['nom'], index=k, nom=r['nom'], type=r['type'], mode=r['mode'], surface_m2=round(r['poly'].area, 2),
                                   liste_index=r.get('liste_index'), point_plan_pt=r.get('point_plan_pt'), poly=r['poly'], niveau_index=i,
-                                  source_nom=r.get('source_nom'), nom_plan=r.get('nom_plan'), couleur_plan=r.get('couleur_plan')))
+                                  source_nom=r.get('source_nom'), hauteur_sous_plafond_m=r.get('hauteur'), nom_plan=r.get('nom_plan'), couleur_plan=r.get('couleur_plan')))
         add(f'{n}_sol', solid([m2 for f_, z0, h in sols for m2 in P.extrude(f_.difference(done), z0, h, None)]), mats['sol'], uv=sol)
         add(f'{n}_plinthes', solid(plin), mats['plinthes'])
         add(f'{n}_dalle', solid(P.extrude(outline, z - SLAB, SLAB - 0.02, None)), mats['dalle'])
@@ -440,6 +451,20 @@ def main(src, dst, cfg='reglages.json'):
             vaults.setdefault(i, []).append(vb)
             add(f'{n}_voute' + (f'_{kv}' if kv else ''), vb.mesh(z, tremie if i == lo and lo != hi else None), mats['voute'])
             print(f"  {pf.get('nom')} ({vb.forme}) : portee {2 * vb.a:.2f} m, axe {vb.theta:.0f} deg, naissance {vb.n:.2f} m, cle {vb.n + vb.f:.2f} m")
+        hroom = []       # pieces a hauteur propre (hors voutes) : faux plafond de leur hauteur jusqu'a celle du niveau
+        for k, r in enumerate(rooms):
+            hr = r.get('hauteur') or (H_REGLE[niveaux[i]['nom']] if H_REGLE[niveaux[i]['nom']] < H - 0.005 else None)
+            if not hr or r['supprimee'] or any(vb.room.intersection(r['poly']).area > 0.5 * r['poly'].area for vb in vaults.get(i, [])): continue
+            hroom.append((r['poly'], hr))
+            if hr < H - 0.005:
+                add(f'{n}_plafond_p{k}', solid(P.extrude(r['poly'].buffer(0.02).intersection(outline), z + hr, H - hr, None)), mats['dalle'])
+                print(f"  piece {r['nom']} : plafond a {hr:.2f} m (niveau {H:.2f} m)")
+        def plaf(x, y, i=i, H=H, hroom=hroom):     # hauteur sous plafond en un point : voute, piece, sinon niveau
+            q = Point(x, y)
+            vb_ = next((vb for vb in vaults.get(i, []) if vb.room.contains(q)), None)
+            if vb_ is not None: return vb_.h(x, y)
+            return next((h_ for g_, h_ in hroom if g_.buffer(0.05).contains(q)), H)
+        plafs[i] = plaf
         # portes : vantaux dessines sur le plan, vitres si un point de reglage tombe dedans
         vit = [Point(S.pt(*q['point'], dx, dy)) for q in pcfg.get('vantaux_vitres_plan_pt', []) if by_name.get(q['niveau'], -1) == i]
         hv = pcfg.get('hauteur_vantail_m', 2.04)
@@ -511,8 +536,8 @@ def main(src, dst, cfg='reglages.json'):
                 aim = EQ.side_to_wall(q0, q1, W)
                 marge = rg.get('marge_sous_plafond_m', 0.01)
                 if vb_ is None:
-                    zA = zB = z + H
-                    ceil_fn = lambda x, y: z + H
+                    zA = zB = z + plaf(mid.x, mid.y)
+                    ceil_fn = lambda x, y, zA=zA: zA
                 else:   # sous une voute : prendre le point le plus bas sous chaque extremite (bord cote mur du rail)
                     ceil_fn = lambda x, y, vb_=vb_: z + vb_.h(x, y)
                     ed = lambda q: min(ceil_fn(q[0] + s_ * aim[0] * 0.02, q[1] + s_ * aim[1] * 0.02) for s_ in (-1, 1))
@@ -526,7 +551,7 @@ def main(src, dst, cfg='reglages.json'):
             add(f'{n}_rail_{j}__rail', solid(rl), mats['rail']); add(f'{n}_rail_{j}__spots', solid(sp), mats['lum'])
         for j, s_ in enumerate([s_ for s_ in eq.get('suspensions', []) if by_name.get(s_['niveau'], -1) == i]):
             x_, y_ = S.pt(*s_['position_plan_pt'], dx, dy)
-            a_, b_ = EQ.suspension(x_, y_, z + H, z + s_['hauteur_bas_m'], s_['diametre_m'])
+            a_, b_ = EQ.suspension(x_, y_, z + plaf(x_, y_), z + s_['hauteur_bas_m'], s_['diametre_m'])
             add(f'{n}_suspension_{j}__lampe', solid(a_), mats['lum']); add(f'{n}_suspension_{j}__cable', solid(b_), mats['rail'])
         b = W.bounds; print(f"{niveaux[i]['nom']}: {b[2]-b[0]:.2f} x {b[3]-b[1]:.2f} m, plafond {H:.2f} m")
 
@@ -542,7 +567,7 @@ def main(src, dst, cfg='reglages.json'):
     post_meshes = {}
     for j, p in enumerate(murs.get('poteaux', [])):
         k = by_name.get(p['niveau'], -1); x, y = S.pt(*p['position_plan_pt'], *shift[k])
-        hp_ = next((vb.h(x, y) for vb in vaults.get(k, []) if vb.room.contains(Point(x, y))), CEIL[k])   # jusqu'a la voute
+        hp_ = plafs[k](x, y) if k in plafs else CEIL[k]   # jusqu'a la voute ou au plafond de la piece
         c = trimesh.creation.cylinder(radius=p['diametre_m'] / 2, height=hp_, sections=32)
         c.apply_translation([x, y, Z[k] + hp_ / 2])
         post_meshes[(k, j)] = (p.get('materiau', 'acier'), [c])
@@ -573,7 +598,7 @@ def main(src, dst, cfg='reglages.json'):
     json.dump(axe, open(dst.rsplit('.', 1)[0] + '.axe.json', 'w')); print('axe colimacon', axe)
     # pieces dans le repere du GLB (x, z), avec de quoi revenir aux points du plan pour l'editeur
     ring = lambda r_: [[round(x - c[0], 3), round(-y - c[2], 3)] for x, y in r_.coords]
-    out = dict(M=M, cx=float(c[0]), cz=float(c[2]), niveaux=[dict(nom=nv['nom'], y=float(Z[k]), dx=shift[k][0], dy=shift[k][1]) for k, nv in enumerate(niveaux)], pieces=[])
+    out = dict(M=M, cx=float(c[0]), cz=float(c[2]), niveaux=[dict(nom=nv['nom'], y=float(Z[k]), hauteur=nv['hauteur_sous_plafond_m'], dx=shift[k][0], dy=shift[k][1]) for k, nv in enumerate(niveaux)], pieces=[])
     out['murs'] = [[ring(r_) for r_ in lv_] for lv_ in walls_out]
     out['marches'] = marches_out
     out['portes'] = [dict(element=d_['element'], charniere=[round(d_['charniere'][0] - c[0], 3), round(-d_['charniere'][1] - c[2], 3)], ouverture_plan_deg=d_['ouverture_plan_deg'], ouverture_depart_deg=d_['ouverture_depart_deg'], axe_mur=d_['axe_mur'],

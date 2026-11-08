@@ -160,6 +160,6 @@ def detect(W, floor, doors, cfg, level, to_model, step_lines=(), etiquettes=(), 
         if np_:      # meme nom sur deux pieces : « Chambre », « Chambre 2 »
             vus[np_] = vus.get(np_, 0) + 1
             if vus[np_] > 1: np_ = f'{np_} {vus[np_]}'
-        r.update(nom=e.get('nom') or np_ or f'Pièce {n}', type=e.get('type') or (type_du_nom(np_) if np_ else None) or 'piece', sol=e.get('sol', {}))
+        r.update(nom=e.get('nom') or np_ or f'Pièce {n}', type=e.get('type') or (type_du_nom(np_) if np_ else None) or 'piece', sol=e.get('sol', {}), hauteur=e.get('hauteur_sous_plafond_m'))
         r['source_nom'] = 'reglage' if e.get('nom') else ('plan' if np_ else 'auto')
     return out
