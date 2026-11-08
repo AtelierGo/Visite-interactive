@@ -386,7 +386,12 @@ def main(src, dst, cfg='reglages.json'):
         to_model = lambda x, y, dx=dx, dy=dy: S.pt(x, y, dx, dy)
         prs = PI.door_rects(page, [cal['portes'], cal.get('portes_coulissantes', 'Porte coulissante')], M, mv)
         steps_l = [c['ligne_plan_pt'] for c in murs.get('changements_de_niveau', []) if by_name.get(c['niveau'], -1) == i]
-        rooms = PI.detect(W0 if EX.is_empty else W0.difference(EX), floor, prs, pcfg_p, niveaux[i]['nom'], to_model, steps_l)
+        exclus = [v for k_, v in cal.items() if v]      # murs, portes, escalier, mobilier... ne sont ni des noms ni des aplats de piece
+        labs = PI.textes_du_plan(page, exclus, [c for c in [pcfg_p.get('calque_noms')] if c]) if pcfg_p.get('detection_noms', False) else []
+        zns = PI.zones_de_couleur(page, M, mv, exclus, [c for c in [pcfg_p.get('calque_couleurs')] if c], pcfg_p.get('surface_min_m2', 0.8)) \
+            if pcfg_p.get('detection_couleurs', False) else []
+        if labs or zns: print(f"  {len(labs)} nom(s) de piece lu(s) sur le plan : {', '.join(t for _, _, t in labs)} ; {len(zns)} aplat(s) de couleur")
+        rooms = PI.detect(W0 if EX.is_empty else W0.difference(EX), floor, prs, pcfg_p, niveaux[i]['nom'], to_model, steps_l, labs, zns)
         for ci, ch in enumerate(murs.get('changements_de_niveau', [])):    # pieces de part et d'autre de chaque marche, pour l'editeur
             if by_name.get(ch['niveau'], -1) != i: continue
             Lp = LineString([S.pt(x, y, dx, dy) for x, y in ch['ligne_plan_pt']]); mid = Lp.interpolate(0.5, normalized=True)
@@ -416,7 +421,8 @@ def main(src, dst, cfg='reglages.json'):
             add(f'{n}_sol_p{k}', solid([m2 for f_, z0, h in sols for m2 in P.extrude(f_.intersection(g), z0, h, None)]), m_, uv=d)
             print(f"  piece {k + 1} : {r['nom']} ({r['type']}, {r['mode']}) {r['poly'].area:.1f} m2")
             rooms_out.append(dict(niveau=niveaux[i]['nom'], index=k, nom=r['nom'], type=r['type'], mode=r['mode'], surface_m2=round(r['poly'].area, 2),
-                                  liste_index=r.get('liste_index'), point_plan_pt=r.get('point_plan_pt'), poly=r['poly'], niveau_index=i))
+                                  liste_index=r.get('liste_index'), point_plan_pt=r.get('point_plan_pt'), poly=r['poly'], niveau_index=i,
+                                  source_nom=r.get('source_nom'), nom_plan=r.get('nom_plan'), couleur_plan=r.get('couleur_plan')))
         add(f'{n}_sol', solid([m2 for f_, z0, h in sols for m2 in P.extrude(f_.difference(done), z0, h, None)]), mats['sol'], uv=sol)
         add(f'{n}_plinthes', solid(plin), mats['plinthes'])
         add(f'{n}_dalle', solid(P.extrude(outline, z - SLAB, SLAB - 0.02, None)), mats['dalle'])

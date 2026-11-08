@@ -106,7 +106,7 @@ def analyser(src, nom_projet=None):
         'projet': dict(nom=nom_projet or os.path.splitext(os.path.basename(src))[0], fichier_plan=os.path.basename(src)),
         'points_a_verifier': verifier,
         'etape_1_import': dict(echelle=echelle, calques=cal, niveaux=niveaux, alignement_niveaux=alignement,
-                               pieces=dict(detection_auto=True, ouverture_max_m=1.8, surface_max_passage_m2=1.2, surface_min_m2=1.2,
+                               pieces=dict(detection_auto=True, detection_noms=True, detection_couleurs=True, calque_noms='', calque_couleurs='', ouverture_max_m=1.8, surface_max_passage_m2=1.2, surface_min_m2=1.2,
                                            couper_aux_changements_de_niveau=True, separations=[], liste=[]),
                                zones_exclues=[], elevations=dict(pages=[], calques=[], mesures=[])),
         'etape_2_murs': dict(epaisseur_dalle_m=0.2, hauteur_linteau_m=2.1, linteaux_ouverture_max_m=1.1, linteaux_marge_portes_m=0.15,
