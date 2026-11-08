@@ -376,7 +376,7 @@ def main(src, dst, cfg='reglages.json'):
                     if len(q) >= 2: out_.append(LineString([(p_.x * M, -p_.y * M) for p_ in q]))
                 return out_
             pts_f = [t_ for d in page.get_drawings() if d.get('layer', '').startswith(cal['fenetres']) for t_ in traits(d)]
-            for k, g in enumerate(sorted(P.polys(unary_union([mv(q_.buffer(fcfg.get('regroupement_traits_m', 0.12))) for q_ in pts_f if not q_.is_empty]) if pts_f else P.Polygon()), key=lambda q: (q.centroid.x, q.centroid.y))):
+            for k, g in enumerate(sorted([q for q in (P.polys(unary_union([mv(q_.buffer(fcfg.get('regroupement_traits_m', 0.12))) for q_ in pts_f if not q_.is_empty])) if pts_f else []) if not q.is_empty], key=lambda q: (q.centroid.x, q.centroid.y))):
                 el = f'{n}_fenetre_{k}'; d_ = DEP.get(el) or {}; ddx, ddy, ddz = deplacement(el)
                 mr = g.minimum_rotated_rectangle; c_ = list(mr.exterior.coords)
                 e_ = max([(c_[j], c_[j + 1]) for j in range(2)], key=lambda e: math.dist(*e))
