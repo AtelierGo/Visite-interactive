@@ -294,7 +294,10 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
           F(HEL.concat('moteur'), 'Générateur', { type: 'select', opts: [['extension_blender', 'Extension Blender'], ['interne', 'Moteur interne']] }) ] },
         { h: 'Portes', f: [
           F(ES.concat('portes', 'hauteur_vantail_m'), 'Hauteur des vantaux', { type: 'number', step: 0.01, u: 'm' }),
-          F(ES.concat('portes', 'epaisseur_vantail_m'), 'Épaisseur des vantaux', { type: 'number', step: 0.005, u: 'm' }) ] },
+          F(ES.concat('portes', 'epaisseur_vantail_m'), 'Épaisseur des vantaux', { type: 'number', step: 0.005, u: 'm' }),
+          F(ES.concat('portes', 'fermees_au_depart'), 'Portes et fenêtres fermées au départ', { type: 'toggle', def: false }),
+          F(ES.concat('portes', 'ajuster_dans_ouverture'), 'Vantaux recalés dans leur ouverture (largeur, milieu du mur, hauteur du linteau)', { type: 'toggle', def: false }),
+          F(ES.concat('portes', 'recouvrement_tableaux_m'), 'Recouvrement sur les tableaux (pas de jour)', { type: 'number', step: 0.001, u: 'm', def: 0.002 }) ] },
         { h: 'Vitrines', f: parListe(ES.concat('vitrines'), (b, e) => [
           F(b.concat('hauteur_naissance_m'), (e.nom || 'Vitrine') + ' : naissance de l’arc', { type: 'number', step: 0.05, u: 'm', src: 'photo' }),
           F(b.concat('hauteur_cle_m'), 'Clé de l’arc', { type: 'number', step: 0.05, u: 'm', src: 'photo', warn: true }),
@@ -671,7 +674,8 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
   }
   const depOf = (root, el) => { const d = (get(root, DEPP) || {})[el] || {}; return [+d.x_m || 0, +d.y_m || 0, +d.z_m || 0]; };
   const PORTE = {}; (PCS.portes || []).forEach(p_ => { PORTE[p_.element] = p_; });
-  const angOf = (root, el) => { const d = (get(root, DEPP) || {})[el] || {}, p_ = PORTE[el]; return d.ouverture_deg != null ? +d.ouverture_deg : (p_ ? p_.ouverture_plan_deg : 0); };
+  const angOf = (root, el) => { const d = (get(root, DEPP) || {})[el] || {}, p_ = PORTE[el]; return d.ouverture_deg != null ? +d.ouverture_deg : (p_ ? aDep(p_) : 0); };
+  const aDep = p_ => p_.ouverture_depart_deg != null ? p_.ouverture_depart_deg : p_.ouverture_plan_deg;    // angle sans réglage (0 = fermée au départ)
   const larOf = (root, el) => { const d = (get(root, DEPP) || {})[el] || {}, p_ = PORTE[el]; return d.largeur_m != null ? +d.largeur_m : (p_ ? p_.largeur_plan_m || 0 : 0); };
   let aimant = true;
   function aimanter(el, x) {      // magnétisme : largeur de l'ouverture ou du plan à 3 cm près, sinon pas de 5 cm
@@ -696,17 +700,94 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
       const L = new THREE.Matrix4().copy(o.parent.matrixWorld).invert().multiply(T.clone().multiply(M)); L.decompose(o.position, o.quaternion, o.scale); });
     draw();
   }
+  // ---------- Magnétisme du déplacement : bords et angles des murs, alignement sur les autres éléments, sinon pas de 1 cm ----------
+  let altDown = false, dragRef = null;
+  addEventListener('keydown', e => { if (e.key === 'Alt') altDown = true; }); addEventListener('keyup', e => { if (e.key === 'Alt') altDown = false; });
+  addEventListener('blur', () => { altDown = false; });
+  const lvlOfEl = el => { const m = MOVABLE.exec(el || ''); return m ? +m[1] : 0; };
+  function boxOf(el) { const b = new THREE.Box3(); meshesOf(el).forEach(o => b.expandByObject(o)); return b; }
+  function contourOf(el) {    // contour au sol de l'élément (enveloppe convexe des sommets, x z) : un placard en biais n'est pas sa boîte
+    const P_ = [], v = new THREE.Vector3();
+    meshesOf(el).forEach(o => { o.updateMatrixWorld(true); const a = o.geometry.attributes.position, st = Math.max(1, Math.floor(a.count / 400));
+      for (let i = 0; i < a.count; i += st) { v.fromBufferAttribute(a, i).applyMatrix4(o.matrixWorld); P_.push([v.x, v.z]); } });
+    P_.sort((p, q) => p[0] - q[0] || p[1] - q[1]); if (P_.length < 3) return P_;
+    const cr = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]), lo = [], hi = [];
+    for (const p of P_) { while (lo.length >= 2 && cr(lo[lo.length - 2], lo[lo.length - 1], p) <= 0) lo.pop(); lo.push(p); }
+    for (const p of P_.slice().reverse()) { while (hi.length >= 2 && cr(hi[hi.length - 2], hi[hi.length - 1], p) <= 0) hi.pop(); hi.push(p); }
+    return lo.slice(0, -1).concat(hi.slice(0, -1));
+  }
+  const typeOf = el => (MOVABLE.exec(el || '') || [])[2];
+  function refsOf(el) {     // au début du glisser : points de l'élément (angles, milieux des côtés, centre) et centres des autres éléments du niveau
+    const b = boxOf(el); if (b.isEmpty()) return null; const l = lvlOfEl(el);
+    const xs = [b.min.x, (b.min.x + b.max.x) / 2, b.max.x], zs = [b.min.z, (b.min.z + b.max.z) / 2, b.max.z];
+    const pts = contourOf(el); if (PORTE[el]) pts.push(PORTE[el].charniere.slice());
+    const autres = new Map(); if (model) model.traverse(o => { const e_ = o.isMesh && elOf(o.name); if (e_ && e_ !== el && lvlOfEl(e_) === l && typeOf(e_) === typeOf(el) && !autres.has(e_)) autres.set(e_, null); });
+    const cs = [...autres.keys()].map(e_ => { const c = boxOf(e_).getCenter(new THREE.Vector3()); return { el: e_, x: c.x, z: c.z }; });
+    return { pts, lvl: l, c: [xs[1], zs[1]], cs, y0: b.min.y };
+  }
+  function aimantPts(pts, lvl, T) {     // meilleur décalage pour poser un des points sur un angle (prioritaire) ou un bord de mur
+    let ang = null, mur = null; const murs = (PCS.murs || [])[lvl] || [];
+    pts.forEach(([px, pz]) => murs.forEach(ring => ring.forEach(([x, z], i) => {
+      const da = Math.hypot(px - x, pz - z); if (da < T * 1.3 && (!ang || da < ang.d)) ang = { d: da, dx: x - px, dz: z - pz, kind: 'angle', at: [x, z] };
+      if (i === ring.length - 1) return; const [bx, bz] = ring[i + 1], vx = bx - x, vz = bz - z, L2 = vx * vx + vz * vz; if (!L2) return;
+      const t = ((px - x) * vx + (pz - z) * vz) / L2; if (t < 0 || t > 1) return; const qx = x + t * vx, qz = z + t * vz, dm = Math.hypot(px - qx, pz - qz);
+      if (dm < T && (!mur || dm < mur.d)) mur = { d: dm, dx: qx - px, dz: qz - pz, kind: 'mur', at: [qx, qz] }; })));
+    return ang || mur;
+  }
+  function contreMur(el) {    // décalage (x, z) qui plaque l'élément contre la face du mur la plus proche
+    const b = boxOf(el); if (b.isEmpty()) return null; const l = lvlOfEl(el), cx = (b.min.x + b.max.x) / 2, cz = (b.min.z + b.max.z) / 2;
+    const P_ = contourOf(el);
+    let best = null;
+    ((PCS.murs || [])[l] || []).forEach(ring => { for (let i = 0; i < ring.length - 1; i++) {
+      const [ax, az] = ring[i], [bx, bz] = ring[i + 1], vx = bx - ax, vz = bz - az, L = Math.hypot(vx, vz); if (L < 0.05) continue;
+      let nx = -vz / L, nz = vx / L; const sc = (cx - ax) * nx + (cz - az) * nz; if (sc < 0) { nx = -nx; nz = -nz; }
+      const t = ((cx - ax) * vx + (cz - az) * vz) / (L * L); if (t < -0.05 || t > 1.05) continue;     // face en vis-à-vis de l'élément
+      const smin = Math.min(...P_.map(([px, pz]) => (px - ax) * nx + (pz - az) * nz));
+      if (Math.abs(sc) < 1.5 && (!best || Math.abs(smin) < Math.abs(best.s))) best = { s: smin, nx, nz }; } });
+    return best ? [-best.s * best.nx, -best.s * best.nz] : null;
+  }
+  function aimanterDep(ref, d) {   // modifie d (Vector3) ; renvoie ce qui a accroché
+    const T = Math.min(0.12, Math.max(0.02, 8 * pxWorld())), pts = ref.pts.map(([x, z]) => [x + d.x, z + d.z]);
+    const w = aimantPts(pts, ref.lvl, T); let out = null;
+    if (w) { d.x += w.dx; d.z += w.dz; out = { kind: w.kind, at: w.at }; }
+    else {
+      const cx = ref.c[0] + d.x, cz = ref.c[1] + d.z; let ax = null, az = null;
+      ref.cs.forEach(o => { if (Math.abs(o.x - cx) < T && (!ax || Math.abs(o.x - cx) < Math.abs(ax.x - cx))) ax = o; if (Math.abs(o.z - cz) < T && (!az || Math.abs(o.z - cz) < Math.abs(az.z - cz))) az = o; });
+      if (ax) d.x += ax.x - cx; else d.x = Math.round(d.x * 100) / 100;
+      if (az) d.z += az.z - cz; else d.z = Math.round(d.z * 100) / 100;
+      if (ax || az) out = { kind: 'aligne', with: [ax, az].filter(Boolean).map(o => elLabel(o.el)), at: [ref.c[0] + d.x, ref.c[1] + d.z] };
+    }
+    d.y = Math.abs(ref.y0 + d.y - LEVEL_Y[ref.lvl]) < T ? LEVEL_Y[ref.lvl] - ref.y0 : Math.round(d.y * 100) / 100;   // posé au sol
+    return out || { kind: 'pas' };
+  }
+  function showSnap(sn, lvl) {
+    const t = document.querySelector('#movebox [data-snap]');
+    snapMark.visible = !!(sn && sn.at); if (snapMark.visible) { snapMark.position.set(sn.at[0], LEVEL_Y[lvl != null ? lvl : lvlOfEl(selEl)] + 0.06, sn.at[1]); snapMark.material.color.set(sn.kind === 'mur' ? 0x3f87c4 : 0x2f6b55); }
+    const txt = !sn ? '' : sn.kind === 'angle' ? 'Accroché à un angle de mur' : sn.kind === 'mur' ? 'Accroché contre un mur' : sn.kind === 'aligne' ? 'Aligné sur ' + [...new Set(sn.with)].join(' et ') : 'Pas de 1 cm';
+    if (t) t.textContent = txt; return txt;
+  }
   const tc = new THREE.TransformControls(camera, renderer.domElement); tc.setSize(0.85); scene.add(tc);
   var tcS = new THREE.TransformControls(camera, renderer.domElement); tcS.setSize(0.85); tcS.showY = false; scene.add(tcS);
-  tcS.addEventListener('dragging-changed', e => { controls.enabled = !e.value; if (!e.value) { buildSteps(); updCount(); render(); } });
+  tcS.addEventListener('dragging-changed', e => { controls.enabled = !e.value; if (!e.value) { snapMark.visible = false; buildSteps(); updCount(); render(); } });
   tcS.addEventListener('change', draw);
   tcS.addEventListener('objectChange', () => { if (!selStep || !step0) return; const d = stepProxy.position.clone().sub(step0.pos);
+    const l = NIV.indexOf(selStep.niveau);
+    if (aimant && !altDown) {     // magnétisme : une extrémité du trait vient sur un mur ou un angle
+      const ends = step0.pts.map(([x, y]) => { const [X, Z] = fromPlan(x, y, l); return [X + d.x, Z + d.z]; });
+      const w = aimantPts(ends, l, Math.min(0.12, Math.max(0.02, 8 * pxWorld())));
+      if (w) { d.x += w.dx; d.z += w.dz; } else { d.x = Math.round(d.x * 100) / 100; d.z = Math.round(d.z * 100) / 100; }
+      snapMark.visible = !!w; if (w) { snapMark.position.set(w.at[0], LEVEL_Y[l] + 0.06, w.at[1]); snapMark.material.color.set(w.kind === 'mur' ? 0x3f87c4 : 0x2f6b55); }
+      stepProxy.position.set(step0.pos.x + d.x, stepProxy.position.y, step0.pos.z + d.z);
+    }
     selStep.ligne_plan_pt = step0.pts.map(p => p.slice()); moveStep(selStep, d.x, d.z);
     const m = stepGroup.children.find(o => o.userData.step === selStep); if (m) m.position.set(step0.pos.x + d.x, m.position.y, step0.pos.z + d.z); });
   const proxy = new THREE.Object3D(); scene.add(proxy); let proxy0 = null, dep0 = null;
-  tc.addEventListener('dragging-changed', e => { controls.enabled = !e.value; if (!e.value) placeProxy(); });
+  tc.addEventListener('dragging-changed', e => { controls.enabled = !e.value; if (e.value) dragRef = refsOf(selEl); else { snapMark.visible = false; placeProxy(); } });
   tc.addEventListener('change', draw);
-  tc.addEventListener('objectChange', () => { const d = proxy.position.clone().sub(proxy0); setDep(selEl, [dep0[0] + d.x, dep0[1] - d.z, dep0[2] + d.y], false); });
+  tc.addEventListener('objectChange', () => { const d = proxy.position.clone().sub(proxy0);
+    const sn = aimant && !altDown && dragRef ? aimanterDep(dragRef, d) : null; showSnap(sn);
+    if (sn) proxy.position.copy(proxy0).add(d);
+    setDep(selEl, [dep0[0] + d.x, dep0[1] - d.z, dep0[2] + d.y], false); });
   function setDep(el, v, replace = true, ang, garde, larg) {
     const all = get(R, DEPP), o = get(ORIG, DEPP)[el]; v = v.map(x => Math.round(x * 1000) / 1000);
     const ov = depOf(ORIG, el), p_ = PORTE[el];
@@ -714,7 +795,7 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
     if (garde === undefined) garde = gardeOf(R, el);
     if (larg === undefined) larg = larOf(R, el); larg = Math.round(Math.max(0.2, larg) * 1000) / 1000;
     if (v.every((x, i) => Math.abs(x - ov[i]) < 5e-4) && (!p_ || Math.abs(ang - angOf(ORIG, el)) < 0.05) && garde === gardeOf(ORIG, el) && (!p_ || Math.abs(larg - larOf(ORIG, el)) < 0.002)) { if (o) all[el] = JSON.parse(JSON.stringify(o)); else delete all[el]; }
-    else { all[el] = { nom: elLabel(el), x_m: v[0], y_m: v[1], z_m: v[2] }; if (p_ && Math.abs(ang - p_.ouverture_plan_deg) >= 0.05) all[el].ouverture_deg = ang; if (garde) all[el].garder_ouverture = true;
+    else { all[el] = { nom: elLabel(el), x_m: v[0], y_m: v[1], z_m: v[2] }; if (p_ && Math.abs(ang - aDep(p_)) >= 0.05) all[el].ouverture_deg = ang; if (garde) all[el].garder_ouverture = true;
       if (p_ && p_.largeur_plan_m && Math.abs(larg - p_.largeur_plan_m) >= 0.002) all[el].largeur_m = larg; }
     applyDep(el); updCount(); updMoveBox(); if (replace) placeProxy();
   }
@@ -739,15 +820,18 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
           <div class="row"><button class="btn ghost" data-act="fermer">Fermer la porte</button><button class="btn ghost" data-act="ouvrir">Ouvrir à 90°</button><button class="btn ghost" data-act="sens">Autre sens</button></div></div>
           <div class="ang"><label>Largeur <input type="range" min="0.3" max="2.5" step="0.01" data-lar="r"><input type="number" step="0.01" min="0.2" data-lar="n"> m</label>
             <div class="row"><button class="btn ghost" data-act="lar-">−</button><button class="btn ghost" data-act="lar+">+</button>${PORTE[selEl].largeur_ouverture_m ? `<button class="btn ghost" data-act="larouv">Largeur de l’ouverture (${PORTE[selEl].largeur_ouverture_m.toFixed(2).replace('.', ',')} m)</button>` : ''}</div>
-            <label class="garde"><input type="checkbox" data-aimant> Magnétisme (pas de 5 cm, accroche au bord de l’ouverture)</label></div>
+</div>
           <label class="garde"><input type="checkbox" data-garde> Garder l’ouverture du mur (seule la porte bouge)</label>
           ${PORTE[selEl].axe_mur ? '<div class="row"><button class="btn ghost" data-act="axe">Centrer dans l’axe du mur</button></div>' : ''}` : ''}
+        <div class="row">${door ? '' : '<button class="btn ghost" data-act="mur" title="Le côté le plus proche du mur vient contre sa face">Contre le mur</button>'}<button class="btn ghost" data-act="sol" title="Le bas de l’élément sur le sol du niveau">Posé au sol</button>${door ? '' : '<button class="btn ghost" data-act="plafond" title="Le haut de l’élément sous le plafond du niveau">Sous le plafond</button>'}</div>
+        <label class="garde"><input type="checkbox" data-aimant> Magnétisme : accroche aux murs, aux angles et aux autres éléments${door ? ', largeur au pas de 5 cm' : ''} (maintenir Alt pour l’ignorer)</label>
+        <p class="note" data-snap style="color:var(--accent);min-height:1.2em;margin:0"></p>
         <p class="note" data-note></p>
         <div class="row"><button class="btn ghost" data-act="zero">Remettre comme sur le plan</button><button class="btn ghost" data-act="close">Terminer</button></div>`;
       movebox.querySelector('h4').textContent = elLabel(selEl);
       movebox.querySelectorAll('input[data-i]').forEach(inp => inp.addEventListener('change', () => {
         const w = depOf(R, selEl); w[+inp.dataset.i] = parseFloat(String(inp.value).replace(',', '.')) || 0; setDep(selEl, w); }));
-      movebox.querySelector('[data-act="zero"]').addEventListener('click', () => setDep(selEl, [0, 0, 0], true, PORTE[selEl] ? PORTE[selEl].ouverture_plan_deg : undefined, false, PORTE[selEl] ? PORTE[selEl].largeur_plan_m : undefined));
+      movebox.querySelector('[data-act="zero"]').addEventListener('click', () => setDep(selEl, [0, 0, 0], true, PORTE[selEl] ? aDep(PORTE[selEl]) : undefined, false, PORTE[selEl] ? PORTE[selEl].largeur_plan_m : undefined));
       movebox.querySelectorAll('[data-lar]').forEach(inp => inp.addEventListener(inp.type === 'range' ? 'input' : 'change', () => {
         let x = parseFloat(String(inp.value).replace(',', '.')); if (!(x > 0)) return;
         if (aimant && inp.type === 'range') x = aimanter(selEl, x);
@@ -759,6 +843,10 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
       movebox.querySelectorAll('[data-ang]').forEach(inp => inp.addEventListener(inp.type === 'range' ? 'input' : 'change', () => {
         setDep(selEl, depOf(R, selEl), true, parseFloat(String(inp.value).replace(',', '.')) || 0); }));
       const act = (k, f) => { const b_ = movebox.querySelector(`[data-act="${k}"]`); if (b_) b_.addEventListener('click', f); };
+      const decaler = (dx, dy, dz, msg) => { const w_ = depOf(R, selEl); setDep(selEl, [w_[0] + dx, w_[1] - dz, w_[2] + dy]); showSnap(null); const t = movebox.querySelector('[data-snap]'); if (t) t.textContent = msg; };
+      act('sol', () => { const b = boxOf(selEl), l = lvlOfEl(selEl); decaler(0, LEVEL_Y[l] - b.min.y, 0, 'Posé au sol du niveau'); });
+      act('plafond', () => { const b = boxOf(selEl), l = lvlOfEl(selEl); decaler(0, LEVEL_Y[l] + NIVS[l].hauteur_sous_plafond_m - b.max.y, 0, 'Contre le plafond du niveau'); });
+      act('mur', () => { const r = contreMur(selEl); if (!r) { const t = movebox.querySelector('[data-snap]'); if (t) t.textContent = 'Aucun mur à moins de 1,5 m'; return; } decaler(r[0], 0, r[1], 'Plaqué contre le mur'); });
       act('fermer', () => setDep(selEl, depOf(R, selEl), true, 0));
       act('ouvrir', () => { const a0 = PORTE[selEl].ouverture_plan_deg, cur = angOf(R, selEl); setDep(selEl, depOf(R, selEl), true, (cur || a0 || 1) < 0 ? -90 : 90); });
       act('sens', () => setDep(selEl, depOf(R, selEl), true, -angOf(R, selEl)));
@@ -785,6 +873,7 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
     if (moveMode && drawing) endDraw(false);
     if (!moveMode) selectEl(null); updMoveBox();
   });
+  window.__atelier = { refsOf, aimanterDep, aimantPts, contreMur, boxOf, selectEl, tc, proxy, get selEl() { return selEl; }, get model() { return model; }, elOf };   // pour les tests automatiques
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && selEl) selectEl(null); });
   function pickElement(e) {
     if (!model) return;

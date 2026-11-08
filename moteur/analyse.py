@@ -112,7 +112,8 @@ def analyser(src, nom_projet=None):
         'etape_2_murs': dict(epaisseur_dalle_m=0.2, hauteur_linteau_m=2.1, linteaux_ouverture_max_m=1.1, linteaux_marge_portes_m=0.15,
                              emprise_fermeture_m=2.0, changements_de_niveau=[], nettoyage_bandes_etroites_m=0.2, poteaux=[], plafonds=[],
                              linteaux_ajustes=[], linteaux_traces=[], epaisseur_max_ouverture_m=0.8),
-        'etape_3_ouvertures_escaliers': dict(portes=dict(hauteur_vantail_m=2.04, epaisseur_vantail_m=0.04, longueur_min_trait_pt=25, vantaux_vitres_plan_pt=[]),
+        'etape_3_ouvertures_escaliers': dict(portes=dict(hauteur_vantail_m=2.04, epaisseur_vantail_m=0.04, longueur_min_trait_pt=25, vantaux_vitres_plan_pt=[],
+                                                         fermees_au_depart=True, ajuster_dans_ouverture=True, recouvrement_tableaux_m=0.002),
                                              vitrines=[], deplacements={}),
         'etape_4_materiaux': dict(
             murs=dict(couleur=[244, 243, 240], rugosite=0.9),

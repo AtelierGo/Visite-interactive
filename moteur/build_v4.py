@@ -191,6 +191,8 @@ def main(src, dst, cfg='reglages.json'):
             p0_, p1_ = S.pt(*v['de_plan_pt'], dx, dy), S.pt(*v['a_plan_pt'], dx, dy); L_ = math.dist(p0_, p1_)
             for a_, b_ in v.get('baies_porte_u_m', []):
                 u_ = (a_ + b_) / 2; baies_c.append(Point(p0_[0] + (p1_[0] - p0_[0]) * u_ / L_, p0_[1] + (p1_[1] - p0_[1]) * u_ / L_))
+        FERMER = pcfg.get('fermees_au_depart', False)     # nouveaux projets : portes et fenetres fermees, ouvertes ensuite dans l'editeur
+        AJUSTER, JEU = pcfg.get('ajuster_dans_ouverture', FERMER), pcfg.get('recouvrement_tableaux_m', 0.002)   # anciens projets : vantaux comme avant
         door_info, axe_mur, geo = {}, {}, {}     # geo : direction du vantail, sa largeur, axe et largeur de l'ouverture
         for k, l in enumerate(lv):
             rc = list(l.minimum_rotated_rectangle.exterior.coords)[:4]
@@ -222,7 +224,62 @@ def main(src, dst, cfg='reglages.json'):
             gw = None
             if gap is not None:
                 xs_ = [c_[0] for c_ in affinity.rotate(gap, -tg, origin=h_, use_radians=True).exterior.coords]; gw = max(xs_) - min(xs_)
-            geo[k] = dict(tl=tl, tg=tg, w0=max(math.dist(rc[j], rc[(j + 1) % 4]) for j in range(4)), gap=gap, gw=gw)
+            geo[k] = dict(tl=tl, tg=tg, w0=max(math.dist(rc[j], rc[(j + 1) % 4]) for j in range(4)), gap=gap, gw=gw, tl_plan=tl, fit=False, a_l=a0)
+        def recaler(k, f0=0.0, f1=1.0, fin=None):     # fin : point (monde) ou s'arrete le vantail (rencontre de deux vantaux)    # vantail k remplace par un rectangle sur la ligne du milieu du mur, de f0 a f1 de la largeur
+            gap, (h_, a0), tg = geo[k]['gap'], door_info[k], geo[k]['tg']
+            r_ = affinity.rotate(gap, -tg, origin=h_, use_radians=True); bx0, by0, bx1, by1 = r_.bounds
+            yc = (by0 + by1) / 2; ep_ = pcfg.get('epaisseur_vantail_m', 0.04)
+            seg = r_.intersection(LineString([(bx0 - 1, yc), (bx1 + 1, yc)]))     # d'un tableau a l'autre, au milieu de l'epaisseur
+            xa, xb = (seg.bounds[0], seg.bounds[2]) if not seg.is_empty else (bx0, bx1)
+            # jusqu'a la face des tableaux : l'ouverture lue sur le plan peut s'arreter avant le mur (au trait de la porte)
+            Wl = affinity.rotate(W.intersection(gap.buffer(0.8)), -tg, origin=h_, use_radians=True)
+            def face(x0_, sens):
+                s_ = Wl.intersection(LineString([(x0_, yc), (x0_ + sens * 0.6, yc)]))
+                if s_.is_empty: return x0_
+                return s_.bounds[0] if sens > 0 else s_.bounds[2]
+            xa = face(xa, -1)
+            if f1 >= 1.0 and fin is None: xb = face(xb, 1)
+            x_a, x_b = xa + (xb - xa) * f0, xa + (xb - xa) * f1
+            if fin is not None: x_b = affinity.rotate(fin, -tg, origin=h_, use_radians=True).x
+            lv[k] = affinity.rotate(box(x_a - JEU, yc - ep_ / 2, x_b + JEU, yc + ep_ / 2), tg, origin=h_, use_radians=True)
+            door_info[k] = (affinity.rotate(Point(x_a - JEU, yc), tg, origin=h_, use_radians=True), a0); axe_mur.pop(k, None)
+            geo[k].update(tl=tg, w0=x_b - x_a + 2 * JEU, fit=True, a_l=0.0)
+            bouts = [affinity.rotate(Point(x_, yc), tg, origin=h_, use_radians=True) for x_ in (x_a, x_b)]
+            return [W.distance(q) for q in bouts], x_b - x_a, bouts[1]
+        gaps_pris = set()
+        if AJUSTER:      # reglage : chaque ouverture recoit son vantail (ou ses deux vantaux) recale : largeur exacte, milieu du mur, sans jour
+            par_gap = {}
+            for k in geo:
+                gap = geo[k]['gap']
+                if gap is None: continue
+                h_, tg = door_info[k][0], geo[k]['tg']; bx0, _, bx1, _ = affinity.rotate(gap, -tg, origin=h_, use_radians=True).bounds
+                rel = bx0 - h_.x                                  # repere tourne autour de la charniere : elle garde son x
+                if abs(rel) > 0.25 or geo[k]['w0'] < 0.3 * (bx1 - bx0): continue     # charniere loin d'un tableau, ou simple trait : pas un vantail
+                sc = lv[k].distance(gap) + abs(rel) + 0.5 * abs(geo[k]['w0'] - (bx1 - bx0))
+                par_gap.setdefault(id(gap), []).append((sc, k, bx0, bx1))
+            for cands in par_gap.values():
+                cands.sort(); _, k1, a1, b1 = cands[0]
+                # porte double (ou tiercee) : un autre vantail dont la charniere est sur le tableau oppose ; l'ouverture est partagee
+                # au prorata des largeurs dessinees
+                autre = next((c for c in cands[1:] if door_info[c[1]][0].distance(door_info[k1][0]) > 0.6 * (b1 - a1)), None)
+                gw_ = b1 - a1
+                if autre is None and abs(geo[k1]['w0'] - gw_) > 0.25 * gw_:     # largeurs sans rapport avec l'ouverture : vantail laisse comme dessine
+                    print(f'  porte {k1} : vantail de {geo[k1]["w0"]:.2f} m pour une ouverture de {gw_:.2f} m, laisse comme sur le plan'); continue
+                gaps_pris.add(id(geo[k1]['gap']))
+                if autre:
+                    w1, w2 = geo[k1]['w0'], geo[autre[1]]['w0']
+                    # axe de l'ouverture : d'une charniere a l'autre (les deux sont sur les tableaux), plus sur que le contour de l'ouverture
+                    hA, hB = door_info[k1][0], door_info[autre[1]][0]; tA = math.atan2(hB.y - hA.y, hB.x - hA.x)
+                    for kk, t_ in ((k1, tA), (autre[1], tA + math.pi)):
+                        geo[kk]['tg'] = t_; a_ = round((math.degrees(geo[kk]['tl_plan'] - t_) + 180) % 360 - 180, 1)
+                        door_info[kk] = (door_info[kk][0], a_); geo[kk]['a_l'] = a_
+                    fin_ = None
+                    for kk, part in ((k1, w1 / (w1 + w2)), (autre[1], w2 / (w1 + w2))):
+                        j_, lw_, fin_ = recaler(kk, 0.0, part, fin_)
+                        print(f'  porte {kk} recalee (deux vantaux) : {lw_:.3f} m' + (f', JOUR {j_[0] * 100:.1f} cm' if j_[0] > 0.005 else ', sans jour'))
+                else:
+                    j_, lw_, _ = recaler(k1)
+                    print(f'  porte {k1} recalee : {lw_:.3f} m entre tableaux' + (f', JOUR {max(j_) * 100:.1f} cm' if max(j_) > 0.005 else ', sans jour'))
         W0 = W                               # murs du plan : emprise du batiment et pieces restent les memes quand une porte bouge
         for k, l in enumerate(lv):
             ddx, ddy, ddz = deplacement(f'{n}_porte_{k}')
@@ -391,17 +448,20 @@ def main(src, dst, cfg='reglages.json'):
             if dl:      # largeur reglee : le vantail s'allonge depuis sa charniere
                 tl = geo[k]['tl']; l = affinity.rotate(l, -tl, origin=h_, use_radians=True)
                 l = affinity.rotate(affinity.scale(l, (geo[k]['w0'] + dl) / geo[k]['w0'], 1, origin=h_), tl, origin=h_, use_radians=True)
-            if ouv is not None and abs(float(ouv) - a0) > 0.05:      # angle d'ouverture regle : rotation autour de la charniere
-                l = affinity.rotate(l, float(ouv) - a0, origin=h_)
-            portes_out.append(dict(element=el, charniere=(h_.x + sx, h_.y + sy), ouverture_plan_deg=a0, axe_mur=axe_mur.get(k),
-                                   direction_plan_deg=round(math.degrees(geo[k]['tl']), 2), largeur_plan_m=round(geo[k]['w0'], 3),
+            a_dep = 0.0 if (FERMER and geo[k]['fit']) else a0       # angle sans reglage : ferme seulement si le vantail est reconnu dans son ouverture, sinon comme dessine
+            cible = float(ouv) if ouv is not None else a_dep
+            if abs(cible - geo[k]['a_l']) > 0.05:      # angle d'ouverture : rotation autour de la charniere
+                l = affinity.rotate(l, cible - geo[k]['a_l'], origin=h_)
+            hk = LINTEL if geo[k]['fit'] else hv          # vantail recale : toute la hauteur de l'ouverture
+            portes_out.append(dict(element=el, charniere=(h_.x + sx, h_.y + sy), ouverture_plan_deg=a0, ouverture_depart_deg=a_dep, axe_mur=axe_mur.get(k),
+                                   direction_plan_deg=round(math.degrees(geo[k]['tl_plan']), 2), largeur_plan_m=round(geo[k]['w0'], 3),
                                    largeur_ouverture_m=round(geo[k]['gw'], 3) if geo[k]['gw'] else None))
             l = affinity.translate(l, sx, sy)
             if vitre:
-                add(f'{n}_porte_{k}__chassis', solid(P.extrude(l.difference(l.buffer(-0.03)) if l.buffer(-0.03).area > 0 else l, z + sz, hv, None)), mats['chassis'])
-                add(f'{n}_porte_{k}__vitrage', solid(P.extrude(l, z + sz + 0.06, hv - 0.12, None)), mats['verre']); nvi += 1
+                add(f'{n}_porte_{k}__chassis', solid(P.extrude(l.difference(l.buffer(-0.03)) if l.buffer(-0.03).area > 0 else l, z + sz, hk, None)), mats['chassis'])
+                add(f'{n}_porte_{k}__vitrage', solid(P.extrude(l, z + sz + 0.06, hk - 0.12, None)), mats['verre']); nvi += 1
             else:
-                add(f'{n}_porte_{k}', solid(P.extrude(l, z + sz, hv, None)), mats['porte']); npl += 1
+                add(f'{n}_porte_{k}', solid(P.extrude(l, z + sz, hk, None)), mats['porte']); npl += 1
         fr, gl = [], []
         print(f'  portes : {npl} pleines, {nvi} vitree(s)')
         hint = S.pt(*centers[i][0], dx, dy) if centers[i][0] else (W.centroid.x, W.centroid.y)
@@ -510,7 +570,7 @@ def main(src, dst, cfg='reglages.json'):
     out = dict(M=M, cx=float(c[0]), cz=float(c[2]), niveaux=[dict(nom=nv['nom'], y=float(Z[k]), dx=shift[k][0], dy=shift[k][1]) for k, nv in enumerate(niveaux)], pieces=[])
     out['murs'] = [[ring(r_) for r_ in lv_] for lv_ in walls_out]
     out['marches'] = marches_out
-    out['portes'] = [dict(element=d_['element'], charniere=[round(d_['charniere'][0] - c[0], 3), round(-d_['charniere'][1] - c[2], 3)], ouverture_plan_deg=d_['ouverture_plan_deg'], axe_mur=d_['axe_mur'],
+    out['portes'] = [dict(element=d_['element'], charniere=[round(d_['charniere'][0] - c[0], 3), round(-d_['charniere'][1] - c[2], 3)], ouverture_plan_deg=d_['ouverture_plan_deg'], ouverture_depart_deg=d_['ouverture_depart_deg'], axe_mur=d_['axe_mur'],
                                        direction_plan_deg=d_['direction_plan_deg'], largeur_plan_m=d_['largeur_plan_m'], largeur_ouverture_m=d_['largeur_ouverture_m']) for d_ in portes_out]
     for r in rooms_out:
         g = r.pop('poly')

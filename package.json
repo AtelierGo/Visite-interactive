@@ -1,6 +1,6 @@
 {
   "name": "atelier-3d",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Du plan Illustrator à l’échelle à la visite 3D (GLB).",
   "main": "main.js",
   "scripts": {
