@@ -6,7 +6,7 @@ from shapely.geometry import Point, box, LineString
 from shapely.ops import unary_union
 from shapely import affinity
 from PIL import Image
-import plan2glb as P, stairs as S, spiral2 as SP, voute as V, colimacon_blender as CB, portes as PO, equipements as EQ, pieces as PI
+import plan2glb as P, stairs as S, spiral2 as SP, voute as V, colimacon_blender as CB, portes as PO, equipements as EQ, pieces as PI, marches_auto as MA, linteaux_portes as LP
 
 
 def load(path):
@@ -202,6 +202,12 @@ def main(src, dst, cfg='reglages.json'):
         z, H = Z[i], CEIL[i]; dx, dy = shift[i]
         mv = lambda g: affinity.translate(g, dx * M, -dy * M)
         W = mv(P.walls_of(page, cal['murs']))
+        ma = murs.get('marches_auto', {})
+        if ma.get('retirer_barres_des_murs', False):      # barres fines des marches dessinees sur le calque des murs : ce ne sont pas des murs
+            _, barres = MA.detecter(page, cal['murs'], M, ma)
+            if barres:
+                W = W.difference(mv(unary_union(barres)).buffer(0.005, join_style='mitre')).buffer(0)
+                print(f"  {len(barres)} trait(s) de marche retire(s) des murs")
         cl = niveaux[i].get('linteaux_ouverture_max_m', 2 * CLOSE) / 2      # reglage par niveau, sinon global
         closed = W.buffer(cl, join_style='mitre').buffer(-cl, join_style='mitre')
         doors = mv(unary_union([box(d['rect'].x0 * M, -d['rect'].y1 * M, d['rect'].x1 * M, -d['rect'].y0 * M)
@@ -236,6 +242,18 @@ def main(src, dst, cfg='reglages.json'):
             b_ = W.intersection(g_.buffer(0.03)).convex_hull.intersection(g_)
             return b_.difference(b_.buffer(-r_ep).buffer(r_ep, join_style='mitre')).buffer(-0.005).buffer(0.005)
         ouvertures0 = [q for g_ in P.polys(lintels) for q in P.polys(ouverture(g_)) if q.area > 0.01]
+        if murs.get('linteaux_par_porte', True):     # reglage : mur au-dessus de chaque porte, d'un tableau a l'autre, trouve a partir de la porte
+            zt = [LineString([S.pt(x, y, dx, dy) for x, y in la['ligne_plan_pt']]).buffer(la.get('rayon_recherche_m', 0.35))
+                  for la in murs.get('linteaux_traces', []) if by_name.get(la['niveau'], -1) == i]
+            lp_ = [g_ for g_ in LP.linteaux(page, [cal['portes'], cal.get('portes_coulissantes', 'Porte coulissante')], W, dx, dy, r_ep,
+                                           seul=murs.get('epaisseur_linteau_seul_m', 0.2)) if not any(g_.intersects(z_) for z_ in zt)]
+            if lp_:
+                U_ = unary_union(lp_)
+                ouvertures0 = [q for q in ouvertures0 if q.intersection(U_).area < 0.3 * q.area] + [q for q in P.polys(U_) if q.area > 0.01]
+                # autour de ces portes, seul le mur des ouvertures reste : plus de morceaux de mur pendus dans une petite piece refermee (toilettes)
+                pres_ = U_.buffer(0.5); garde_ = unary_union(ouvertures0).buffer(0.01)
+                lintels = unary_union([lintels.difference(pres_), lintels.intersection(pres_).intersection(garde_), U_]).buffer(-0.005).buffer(0.005)
+                print(f'  {len(lp_)} linteau(x) de porte, d\'un tableau a l\'autre')
         door_shift, alleges, garde = {}, [], set()
         # charniere et angle de chaque vantail : 0 deg = porte fermee (dans l'axe de son ouverture), angle du plan = a0
         baies_c = []
@@ -691,6 +709,10 @@ def main(src, dst, cfg='reglages.json'):
     out = dict(M=M, cx=float(c[0]), cz=float(c[2]), niveaux=[dict(nom=nv['nom'], y=float(Z[k]), hauteur=nv['hauteur_sous_plafond_m'], dx=shift[k][0], dy=shift[k][1]) for k, nv in enumerate(niveaux)], pieces=[])
     out['murs'] = [[ring(r_) for r_ in lv_] for lv_ in walls_out]
     out['marches'] = marches_out
+    out['marches_plan'] = []      # marches lues sur le plan, que l'editeur peut ajouter (projets crees avant la detection)
+    for k_, pg_ in enumerate(pages):
+        try: out['marches_plan'] += MA.reglages(pg_, cal['murs'], M, niveaux[k_]['nom'], murs.get('marches_auto', {}), len(out['marches_plan']))
+        except Exception as e_: print(f'  marches non lues sur le niveau {niveaux[k_]["nom"]} : {e_}')
     out['portes'] = [dict(element=d_['element'], charniere=[round(d_['charniere'][0] - c[0], 3), round(-d_['charniere'][1] - c[2], 3)], ouverture_plan_deg=d_['ouverture_plan_deg'], ouverture_depart_deg=d_['ouverture_depart_deg'], axe_mur=d_['axe_mur'],
                                        direction_plan_deg=d_['direction_plan_deg'], largeur_plan_m=d_['largeur_plan_m'], largeur_ouverture_m=d_['largeur_ouverture_m']) for d_ in portes_out]
     for r in rooms_out:

@@ -1,7 +1,8 @@
 """Prototype: plan Illustrator (PDF-compatible) au 1:50 -> GLB brut (murs, sols, linteaux)."""
 import sys, numpy as np, pymupdf, trimesh
 from shapely.geometry import Polygon, MultiPolygon, box
-from shapely.ops import unary_union
+from shapely.ops import unary_union, polygonize
+from shapely.geometry import LineString
 from shapely import make_valid
 
 PT_TO_M = 25.4 / 72 / 1000 * 50          # 1 pt papier au 1:50 -> metres reels
@@ -37,6 +38,16 @@ def bez(p0, p1, p2, p3, n=12):
         u = 1 - t
         yield p0*(u**3) + p1*(3*u*u*t) + p2*(3*u*t*t) + p3*(t**3)
 
+def nonzero(rings):
+    sgn = [1 if Polygon(r.exterior).exterior.is_ccw else -1 for r in rings]
+    vals = [make_valid(r) for r in rings]
+    faces = list(polygonize(unary_union([LineString(r.exterior.coords) for r in rings])))
+    keep = []
+    for f in faces:
+        q = f.representative_point()
+        if sum(s_ for s_, v in zip(sgn, vals) if v.contains(q)) != 0: keep.append(f)
+    return unary_union(keep) if keep else Polygon()
+
 def walls_of(page, layer='Murs'):
     geom = None
     for d in page.get_drawings():
@@ -48,12 +59,9 @@ def walls_of(page, layer='Murs'):
             g = None
             for r in rings:
                 r = make_valid(r); g = r if g is None else g.symmetric_difference(r)
-        else:   # regle non nulle : le sens de parcours distingue pleins et trous
-            sign = lambda r: Polygon(r.exterior).exterior.is_ccw
-            ref = sign(max(rings, key=lambda r: abs(r.area)))
-            full = unary_union([make_valid(r) for r in rings if sign(r) == ref])
-            holes = unary_union([make_valid(r) for r in rings if sign(r) != ref])
-            g = full.difference(holes)
+        elif len(rings) == 1: g = make_valid(rings[0])
+        else:   # regle non nulle (comme Illustrator) : une zone est pleine si la somme des sens de parcours des contours qui l'entourent n'est pas nulle
+            g = nonzero(rings)
         if g is not None: geom = g if geom is None else geom.union(g)
     return geom.buffer(0)
 

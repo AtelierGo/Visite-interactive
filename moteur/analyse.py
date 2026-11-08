@@ -8,6 +8,9 @@ Tout le reste part de valeurs neutres, marquees « a verifier » dans l'editeur.
 """
 import json, re, sys, os
 import pymupdf
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import plan2glb as P
+import marches_auto as MA
 
 CALQUES = [   # cle du reglage, mots reconnus dans le nom du calque (sans accents ni majuscules)
     ('murs', [r'^mur', r'\bmurs?\b', r'^wall']),
@@ -97,6 +100,18 @@ def analyser(src, nom_projet=None):
                                     ouverture_apres_arrivee_deg=0, bandeau_sous_tremie_m=0.2, nombre_montants=9),
                    palier=dict(angle_deg=90))
         verifier.append(['Escalier hélicoïdal', 'Trouvé sur deux niveaux. Réglez le pied, l’arrivée et la rotation à l’étape Ouvertures et escaliers.', 'ouvertures'])
+    # marches dessinees sur le plan (traits en travers d'un passage) : changements de niveau a verifier
+    M = 25.4 / 72 / 1000 * echelle; P.PT_TO_M = M
+    marches_cfg = dict(detection_auto=True, retirer_barres_des_murs=True, epaisseur_max_m=0.12, longueur_min_m=0.5, longueur_max_m=4.0,
+                       ecart_max_m=0.5, distance_mur_m=0.12, chercher_le_haut=True, hauteur_marche_m=0.17)
+    changements = []
+    for nv in niveaux:
+        try: changements += MA.reglages(doc[nv['page'] - 1], cal['murs'], M, nv['nom'], marches_cfg, len(changements))
+        except Exception as e: print(f'  marches non lues sur la page {nv["page"]} : {e}')
+    if changements:
+        verifier.append(['Marches', f'{len(changements)} groupe(s) de marches trouvé(s) sur le plan. Le sens de montée ne se lit pas sur un plan : '
+                         'vérifiez-le à l’étape Pièces (marches et changements de niveau).', 'pieces'])
+
     alignement = dict(methode='axe_escalier_helicoidal' if hel else 'aucun', decalage_manuel_m=None)
     if len(niveaux) > 1 and not hel:
         verifier.append(['Calage des niveaux', 'Aucun élément commun trouvé entre les pages : les niveaux sont superposés tels quels.', 'import'])
@@ -111,8 +126,8 @@ def analyser(src, nom_projet=None):
                                            couper_aux_changements_de_niveau=True, separations=[], liste=[]),
                                zones_exclues=[], elevations=dict(pages=[], calques=[], mesures=[])),
         'etape_2_murs': dict(epaisseur_dalle_m=0.2, hauteur_linteau_m=2.1, linteaux_ouverture_max_m=1.1, linteaux_marge_portes_m=0.15,
-                             emprise_fermeture_m=2.0, ajuster_niveaux_aux_pieces=True, murs_regles=[], changements_de_niveau=[], nettoyage_bandes_etroites_m=0.2, poteaux=[], plafonds=[],
-                             linteaux_ajustes=[], linteaux_traces=[], epaisseur_max_ouverture_m=0.8),
+                             emprise_fermeture_m=2.0, ajuster_niveaux_aux_pieces=True, murs_regles=[], changements_de_niveau=changements, marches_auto=marches_cfg, nettoyage_bandes_etroites_m=0.2, poteaux=[], plafonds=[],
+                             linteaux_ajustes=[], linteaux_traces=[], linteaux_par_porte=True, epaisseur_linteau_seul_m=0.2, epaisseur_max_ouverture_m=0.8),
         'etape_3_ouvertures_escaliers': dict(portes=dict(hauteur_vantail_m=2.04, epaisseur_vantail_m=0.04, longueur_min_trait_pt=25, vantaux_vitres_plan_pt=[],
                                                          fermees_au_depart=True, ajuster_dans_ouverture=True, recouvrement_tableaux_m=0.002),
                                              fenetres=dict(allege_m=0.9, regroupement_traits_m=0.12, haut_m=None, epaisseur_chassis_m=0.06, largeur_cadre_m=0.05), vitrines=[], deplacements={}),

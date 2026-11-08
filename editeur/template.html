@@ -238,7 +238,7 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
   const PCS = JSON.parse(document.getElementById('pieces').textContent);
   const PP = ['etape_1_import', 'pieces'];
   const get = (o, p) => p.reduce((a, k) => (a == null ? a : a[k]), o);
-  const set = (o, p, v) => { const last = p[p.length - 1]; get(o, p.slice(0, -1))[last] = v; };
+  const set = (o, p, v) => { const last = p[p.length - 1]; p.slice(0, -1).reduce((a, k) => (a[k] == null ? (a[k] = {}) : a[k]), o)[last] = v; };   // cree les sous-reglages absents (anciens projets)
   const I = ['etape_1_import'], MU = ['etape_2_murs'], ES = ['etape_3_ouvertures_escaliers'], MA = ['etape_4_materiaux'], EQ = ['etape_5_mobilier_eclairage'];
   const HEL = ES.concat('escalier_helicoidal');
   const hex = rgb => '#' + rgb.map(v => Math.round(v).toString(16).padStart(2, '0')).join('');
@@ -283,6 +283,10 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
           F(PP.concat('calque_noms'), 'Calque des noms', { type: 'text', def: '', note: 'Vide : tous les calques sauf murs, portes, escalier et mobilier.' }),
           F(PP.concat('calque_couleurs'), 'Calque des aplats', { type: 'text', def: '', note: 'Vide : tous les calques sauf murs, portes, escalier et mobilier, et seuls les aplats de couleur comptent. Sur ce calque, le blanc et le gris comptent aussi.' }),
           F(PP.concat('couper_aux_changements_de_niveau'), 'Couper aux marches', { type: 'toggle' }),
+          F(MU.concat('marches_auto', 'hauteur_marche_m'), 'Hauteur d’une marche lue sur le plan', { type: 'number', step: 0.01, u: 'm', def: 0.17, note: 'Pour les marches trouvées sur le plan (traits en travers d’un passage). Chaque groupe se règle ensuite plus bas.' }),
+          F(MU.concat('marches_auto', 'chercher_le_haut'), 'Trait seul : chercher le haut de la marche', { type: 'toggle', def: true, note: 'Un trait seul en travers d’un passage : le bord parallèle le plus proche (palier, meuble) devient le haut, ce qui fait deux marches.' }),
+          F(MU.concat('marches_auto', 'ecart_max_m'), 'Écart maximal entre deux marches', { type: 'number', step: 0.05, u: 'm', def: 0.5 }),
+          F(MU.concat('marches_auto', 'retirer_barres_des_murs'), 'Les barres fines des marches ne sont pas des murs', { type: 'toggle', def: false, note: 'Une marche dessinée en barre pleine sur le calque des murs est retirée des murs.' }),
           F(PP.concat('ouverture_max_m'), 'Passage coupé jusqu’à', { type: 'number', step: 0.1, u: 'm', note: 'Une ouverture plus étroite sépare deux pièces.' }),
           F(PP.concat('surface_min_m2'), 'Surface minimale d’une pièce', { type: 'number', step: 0.1, u: 'm²', note: 'Plus petit, l’espace rejoint la pièce voisine (seuils, renfoncements).' }) ] } ] },
     { id: 'murs', t: 'Murs et plafonds', s: 'Hauteurs, voûte, linteaux, poteaux',
@@ -297,6 +301,8 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
         { h: 'Poteaux', f: parListe(MU.concat('poteaux'), (b, e, k) => [F(b.concat('diametre_m'), `Poteau ${k + 1} (${e.niveau}), diamètre`, { type: 'number', step: 0.01, u: 'm', src: 'plan' })]) },
         { h: 'Nettoyage', f: [
           F(MU.concat('nettoyage_bandes_etroites_m'), 'Bandes étroites supprimées sous', { type: 'number', step: 0.05, u: 'm' }),
+          F(MU.concat('linteaux_par_porte'), 'Mur au-dessus de chaque porte, d’un tableau à l’autre', { type: 'toggle', def: true, note: 'Lu à partir de la porte (charnière et arc, ou vantail coulissant). Corrige les trous et les morceaux de mur pendus au-dessus des portes.' }),
+          F(MU.concat('epaisseur_linteau_seul_m'), 'Épaisseur du mur au-dessus d’une porte sans mur dans son axe', { type: 'number', step: 0.01, u: 'm', def: 0.2 }),
           F(MU.concat('linteaux_ouverture_max_m'), 'Ouvertures fermées au-dessus jusqu’à', { type: 'number', step: 0.1, u: 'm' }),
           ...parNiveau('linteaux_ouverture_max_m', n => n.nom + ' : ouvertures fermées au-dessus jusqu’à', { type: 'number', step: 0.1, u: 'm' }) ] } ] },
     { id: 'ouvertures', t: 'Ouvertures et escaliers', s: 'Colimaçon, portes, vitrine',
@@ -1434,7 +1440,7 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
       const tot = ch.mode === 'cote' ? ch.cote_m : ch.marches * ch.hauteur_marche_m;
       li.innerHTML = `<span class="sw" style="background:#d6a23a;height:5px"></span><div style="display:grid;gap:6px;min-width:0">
         <input type="text" aria-label="Nom des marches">
-        <span class="note">${info && info.bas ? escH(info.bas) + ' → ' + escH(info.haut || '?') + ' · ' : ''}${Math.round((tot || 0) * 100)} cm au total</span>
+        <span class="note">${ch.auto ? '<span class="chip check">lues sur le plan · vérifiez le côté qui monte</span> ' : ''}${info && info.bas ? escH(info.bas) + ' → ' + escH(info.haut || '?') + ' · ' : ''}${Math.round((tot || 0) * 100)} cm au total</span>
         <div class="steprow"></div></div>`;
       const nm = li.querySelector('input'); nm.value = ch.nom; nm.addEventListener('input', () => { ch.nom = nm.value; updCount(); });
       const box = li.querySelector('.steprow');
@@ -1443,7 +1449,7 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
       num('Marches', 'marches', 1, ''); num('Hauteur (m)', 'hauteur_marche_m', 0.01, 'm'); num('Giron (m)', 'giron_m', 0.01, 'm');
       const sw = document.createElement('label'); sw.className = 'mini'; sw.innerHTML = '<span>Côté qui monte</span><select></select>';
       const sel = sw.querySelector('select'); sel.innerHTML = SIDES.map(([v, t]) => `<option value="${v}">${t}</option>`).join(''); sel.value = ch.cote_qui_monte;
-      sel.addEventListener('change', () => { ch.cote_qui_monte = sel.value; updCount(); }); box.appendChild(sw);
+      sel.addEventListener('change', () => { ch.cote_qui_monte = sel.value; delete ch.auto; updCount(); render(); }); box.appendChild(sw);
       const mv = document.createElement('div'); mv.className = 'mini'; mv.style.gridColumn = '1 / -1';
       mv.innerHTML = `<span>Déplacer${ch === selStep ? ' : faites glisser les flèches dans l’aperçu, ou' : ''} pas de</span><div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center">
         <input type="number" step="0.01" min="0.005" value="${moveStep.pas || 0.05}" style="width:60px"><em>m</em></div>`;
@@ -1463,6 +1469,17 @@ input:focus-visible, select:focus-visible, button:focus-visible { outline: 2px s
     });
     g.appendChild(ul);
     if (!ul.children.length) { const p = document.createElement('p'); p.className = 'empty'; p.style.margin = '0'; p.textContent = 'Aucune marche sur ce niveau.'; g.appendChild(p); }
+    // marches lues sur le plan et pas encore dans la liste (projets crees avant la detection, ou marches supprimees)
+    const proche = (a, b) => {     // meme groupe : traits presque paralleles dont les milieux sont a moins de 20 pt (deplace a la main, autre trait du groupe)
+      if (!a || !b || a.length !== 2 || b.length !== 2) return false;
+      const ang = l => Math.atan2(l[1][1] - l[0][1], l[1][0] - l[0][0]), d = Math.abs(((ang(a) - ang(b)) % Math.PI + Math.PI) % Math.PI);
+      return Math.min(d, Math.PI - d) < 0.15 && Math.hypot((a[0][0] + a[1][0] - b[0][0] - b[1][0]) / 2, (a[0][1] + a[1][1] - b[0][1] - b[1][1]) / 2) < 20; };
+    const lues = (PCS.marches_plan || []).filter(m => lvlShown(NIV.indexOf(m.niveau)) && !stepsCfg().some(c => c.niveau === m.niveau && proche(c.ligne_plan_pt, m.ligne_plan_pt)));
+    if (lues.length) { const a = document.createElement('button'); a.className = 'btn'; a.style.marginTop = '8px';
+      a.textContent = `Ajouter ${lues.length > 1 ? 'les ' + lues.length + ' groupes de marches lus' : 'le groupe de marches lu'} sur le plan`;
+      a.addEventListener('click', () => { const mu = get(R, MU), L = mu.changements_de_niveau = mu.changements_de_niveau || [];
+        lues.forEach(m => L.push(Object.assign(JSON.parse(JSON.stringify(m)), { hauteur_marche_m: (mu.marches_auto || {}).hauteur_marche_m ?? m.hauteur_marche_m })));
+        buildSteps(); updCount(); render(); }); g.appendChild(a); }
     const b = document.createElement('button'); b.className = 'btn ghost'; b.style.marginTop = '8px'; b.textContent = 'Tracer des marches';
     b.addEventListener('click', () => startDraw('marche')); g.appendChild(b);
     const n = document.createElement('p'); n.className = 'note'; n.style.margin = '4px 0 0';
